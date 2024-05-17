@@ -21,6 +21,9 @@ const falseFraming = [
   "The US deficit increased after President Obama was first elected.",
   "The United States has the highest federal income tax rate of any Western country.",
 ];
+
+//WANT DATA TO GO HERE
+
 topic = 0;
 Empirica.onGameStart(({ game }) => {
   //grab topic index for tweet
@@ -48,79 +51,15 @@ Empirica.onGameStart(({ game }) => {
       task: "Opinion",
     })
     .addStage({ name: "opinion", duration: 120 });
-
-  [1, 2, 3].forEach((i) => {
-    const round = game.addRound({
-      idx: i,
-      name: "Round " + i + "/3",
-      task: "Chat",
-    });
-    const intermediary = round.addStage({
-      idx: i,
-      name: "Intermediary",
-      task: "Intermediary",
-      duration: 20,
-    });
-
-    const sendStage = round.addStage({
-      idx: i,
-      name: "send",
-      stageNum: "Stage " + i + "/3",
-      duration: 60,
-    });
-
-    const chatStage = round.addStage({
-      idx: i,
-      name: "chat",
-      stageNum: "Stage " + i + "/3",
-      duration: 180,
-    });
-  });
   game
     .addRound({
       name: "Post Opinion",
       task: "Opinion",
     })
     .addStage({ name: "opinion", duration: 120 });
+  //TO DO: ADD STAGE, RENDER TRANSCRIPT BASED ON SERVER VALUE
 });
-Empirica.onRoundStart(({ round }) => {
-  if (
-    round.get("name") !== "Initial Opinion" &&
-    round.get("name") !== "Instructions"
-  ) {
-    const players = round.currentGame.players.sort((a, b) =>
-      a.id.localeCompare(b.id)
-    );
-
-    const idx = round.get("idx");
-
-    const pairings = [
-      [
-        [0, 1],
-        [2, 3],
-      ],
-      [
-        [0, 2],
-        [1, 3],
-      ],
-      [
-        [0, 3],
-        [1, 2],
-      ],
-    ];
-
-    const currentPairings = pairings[idx - 1];
-
-    currentPairings.forEach((pair) => {
-      const [firstIndex, secondIndex] = pair;
-      const firstPlayer = players[firstIndex];
-      const secondPlayer = players[secondIndex];
-
-      firstPlayer.set("recipient", secondPlayer.id);
-      secondPlayer.set("recipient", firstPlayer.id);
-    });
-  }
-});
+Empirica.onRoundStart(({ round }) => {});
 
 Empirica.onStageStart(({ stage }) => {});
 
