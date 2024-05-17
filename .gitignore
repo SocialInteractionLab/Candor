@@ -1,0 +1,9 @@
+.DS_Store
+.idea
+*.log
+tmp/
+node_modules
+experiment1/client/node_modules
+experiment1/server/node_modules
+experiment1/server/dist/index.*
+.empirica/local
