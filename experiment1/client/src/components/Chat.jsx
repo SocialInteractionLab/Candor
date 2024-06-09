@@ -59,12 +59,7 @@ export function Chat({ scope, attribute, loading}) {
                            <div></div>
         }
         {
-            //show slider and input box for opinion stage
-            stage.get("name") == 'opinion' ?
-            <Opinion toggle={0} scope = {scope} attribute = {attribute}/> : <div></div>
-        }
-        {
-            stage.get("name") == 'send' || stage.get('name') === 'chat' ?
+            stage.get("name") == 'Cycle' ?
             <InputBox onNewMessage={handleNewMessage} buttonStyles='w-9 h-9 p-2 text-sm' toggle={0}/>  : <div></div>
         }
         </div>

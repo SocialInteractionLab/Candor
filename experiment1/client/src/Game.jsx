@@ -6,7 +6,6 @@ import { Profile } from "./components/Profile"
 import { World } from "./components/World";
 import { useState } from "react";
 import { Introduction } from "./components/Introduction";
-import {Intermediate} from "./components/Intermediate";
 
 export function Game() {
   const game = useGame();
@@ -16,7 +15,6 @@ export function Game() {
 
   const isInitialOpinionRound = round.get("name") === "Initial Opinion" || round.get("name") === "Post Opinion";
   const isIntro = round.get("name") === "Intro";
-  const intermediary = stage.get("name") === "Intermediary";
 
   if (isIntro) {
     return (
@@ -26,18 +24,6 @@ export function Game() {
       </div>
       <div className="h-full w-full flex flex-col items-center justify-center">
         <Introduction />
-      </div>
-      </div>
-    );
-  }
-  if (intermediary) {
-    return (
-      <div>
-      <div className="w-full flex">
-        <Profile />
-      </div>
-      <div className="h-full w-full flex flex-col items-center justify-center">
-        <Intermediate/>
       </div>
       </div>
     );

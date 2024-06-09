@@ -17,4 +17,4 @@ treatments:
     - name: experiment1
       factors:
         opinion: slider
-        playerCount: 4
+        playerCount: 1
