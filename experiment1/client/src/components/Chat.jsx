@@ -43,22 +43,6 @@ export function Chat({ scope, attribute, loading}) {
         //render right side of screen depending on what stage the game is in
         <div className="h-full justify-center flex flex-col">
         {
-            stage.get('name') == 'send' ?
-            <h2 className="align-left"> Messages <b>sent</b>:</h2> :
-            <div></div>
-        }
-        {
-            stage.get('name') == 'observe' ?
-            <h2 className="align-left"> Messages <b>received</b>:</h2> :
-            <div></div>
-        }
-        {
-            stage.get('name') == 'send' || stage.get('name') == 'observe' || stage.get('name') == 'chat' ?
-            <MessagesPanel scope={scope} msgs={msgs} stage={stage}
-                           round={round} player={player}/> :
-                           <div></div>
-        }
-        {
             stage.get("name") == 'Cycle' ?
             <InputBox onNewMessage={handleNewMessage} buttonStyles='w-9 h-9 p-2 text-sm' toggle={0}/>  : <div></div>
         }

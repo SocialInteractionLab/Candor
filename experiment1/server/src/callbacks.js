@@ -16,7 +16,7 @@ const parseCSV = (filePath) => {
 
 // Path to your CSV file
 const csvFilePath =
-  "/Users/pranavdronavalli/Research/Candor/experiment1/server/dist/transcript_backbiter.csv";
+  "/Users/pranavdronavalli/Research/Candor/transcript_backbiter.csv";
 
 // Parse CSV file
 const data = parseCSV(csvFilePath);
@@ -24,12 +24,6 @@ const data = parseCSV(csvFilePath);
 console.log(data);
 
 Empirica.onGameStart(({ game }) => {
-  game
-    .addRound({
-      name: "Intro",
-      task: "Introduction",
-    })
-    .addStage({ name: "Introduction", duration: 90 });
   game
     .addRound({
       name: "Cycle",
