@@ -2,8 +2,12 @@
   "dependencies": {
     "@empirica/core": "1.8.10",
     "csv-parse": "^5.5.6",
+    "csv-stringify": "^6.5.0",
     "fs": "^0.0.1-security",
+    "googleapis": "^142.0.0",
+    "install": "^0.13.0",
     "minimist": "1.2.6",
+    "npm": "^10.8.2",
     "ws": "^8.16.0"
   },
   "devDependencies": {

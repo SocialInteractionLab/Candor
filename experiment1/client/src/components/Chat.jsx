@@ -21,6 +21,7 @@ export function Chat({ scope, attribute, loading}) {
         return <LoadingComp />;
     }
     const handleNewMessage = (text) => {
+        // console.log('called')
         scope.append(attribute, {
             text,
             likes : {},
@@ -35,6 +36,7 @@ export function Chat({ scope, attribute, loading}) {
             },
         });
         const playerStageData = scope.getAttribute(attribute)?.items || [];
+        console.log(playerStageData)
         game.set("messages", playerStageData.map((msg, i) => msg.val._value));
     };
 
