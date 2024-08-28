@@ -13,7 +13,7 @@ export function Game() {
   const [currentUtterance, setCurrentUtterance] = useState(null); // State to manage current utterance index
 
   const isInitialOpinionRound = round.get("name") === "Initial Opinion" || round.get("name") === "Post Opinion";
-  const isIntro = round.get("name") === "Intro";
+  const isIntro = stage.get("name") === "Instruction";
 
   const handleCurrentUtteranceSelect = (index) => {
     setCurrentUtterance(index);

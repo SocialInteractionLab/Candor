@@ -17,34 +17,41 @@ const parseCSV = (filePath) => {
   return records;
 };
 // Path to your CSV file
-const csvFilePath =
-  // "/Users/pranavdronavalli/Research/Candor/transcript_backbiter.csv";
-  "/Users/zhoucy/Desktop/RAship/Candor/experiment1/transcript_backbiter.csv"
+// const csvFilePath =
+//   "/experiment1/Intro_example.csv"
+
+const csvFilePath = path.join(__dirname, 'Intro_example.csv');
 
 // Parse CSV file
-// const data = parseCSV(csvFilePath);
+const intro_example = parseCSV(csvFilePath);
 
 Empirica.onGameStart(({ game }) => {
   getFile().then((file) => {
     game.set('data', file.content)
+    game.set('conversation_id', file.file_id)
     console.log('file loaded')
-    game
-    .addRound({
-      name: "Cycle",
-      task: "Cycle",
+    const round = game.addRound({
+      name: "Candor",
+      task: "Candor",
     })
-    .addStage({ name: "Cycle", duration: 9000 })
+    round.addStage({name: "Instruction",duration: 6000, })
+    round.addStage({name: "Annotation", duration: 9000 })
 
   })
 });
 
-Empirica.onRoundStart(({ round }) => {});
+Empirica.onRoundStart(({ round }) => {
+  round.set('example', intro_example)
+});
 
 Empirica.onStageStart(({ stage }) => {});
 
 Empirica.onStageEnded(({ stage }) => {});
 
-Empirica.onRoundEnded(({ round }) => {});
+Empirica.onRoundEnded(({ round }) => {
+  round.set('example', '')
+});
 
 Empirica.onGameEnded(({ game }) => {
+  game.set('data', '')
 });

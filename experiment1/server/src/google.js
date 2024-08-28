@@ -148,6 +148,53 @@ async function listAllFiles(query) {
     }
 }
 
+  // get conversation id
+  async function getGrandparentFolderName(folderId) {
+    const drive = google.drive({ version: 'v3', auth: await auth.getClient() });
+    try {
+      // Retry logic for fetching the parent folder
+      const parentRes = await retryRequest(() => drive.files.get({
+        fileId: folderId,
+        fields: 'id, name, parents',
+        supportsAllDrives: true,
+        timeout: 30000
+      }));
+  
+      const parentFolderId = parentRes.data.parents ? parentRes.data.parents[0] : null;
+  
+      if (!parentFolderId) {
+        throw new Error('No parent folder found for the given folder ID.');
+      }
+  
+      // Retry logic for fetching the grandparent folder
+      const grandparentRes = await retryRequest(() => drive.files.get({
+        fileId: parentFolderId,
+        fields: 'id, name, parents',
+        supportsAllDrives: true,
+        timeout: 30000
+      }));
+  
+      const grandparentFolderId = grandparentRes.data.parents ? grandparentRes.data.parents[0] : null;
+  
+      if (!grandparentFolderId) {
+        throw new Error('No grandparent folder found for the given parent folder ID.');
+      }
+  
+      // Retry logic for fetching the grandparent folder name
+      const grandparentNameRes = await retryRequest(() => drive.files.get({
+        fileId: grandparentFolderId,
+        fields: 'name',
+        supportsAllDrives: true,
+        timeout: 30000
+      }));
+  
+      return grandparentNameRes.data.name;
+    } catch (error) {
+      console.error('Error retrieving grandparent folder name:', error.message);
+      throw error;
+    }
+  }
+
 // Function to get a specific file based on the count
 async function getFile() {
     try {
@@ -167,11 +214,11 @@ async function getFile() {
 
         const file = {
             info: allFiles[count],
-            content: await getFileContent(allFiles[count].id)
+            content: await getFileContent(allFiles[count].id),
+            file_id: await getGrandparentFolderName(allFiles[count].id)
         };
 
         await incrementCount();
-
         return file;
     } catch (error) {
         console.error(`Error fetching file: ${error.message}`);

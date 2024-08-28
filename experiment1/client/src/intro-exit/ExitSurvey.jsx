@@ -83,7 +83,6 @@ export function ExitSurvey({ next }) {
                       className={inputClassName}
                       value={age}
                       onChange={(e) => setAge(e.target.value)}
-                      required
                     />
                   </div>
                 </div>
@@ -99,7 +98,6 @@ export function ExitSurvey({ next }) {
         className={inputClassName}
         value={gender}
         onChange={(e) => setGender(e.target.value)}
-        required
       >
         
         <option value="male">Male</option>
@@ -120,7 +118,6 @@ export function ExitSurvey({ next }) {
                       className={inputClassName}
                       value={ethnicity}
                       onChange={(e) => setEthnicity(e.target.value)}
-                      required
                     />
                   </div>
                 </div>
@@ -136,7 +133,6 @@ export function ExitSurvey({ next }) {
                       className={inputClassName}
                       value={politics}
                       onChange={(e) => setPolitics(e.target.value)}
-                      required
                     />
                   </div>
                 </div>
@@ -152,7 +148,6 @@ export function ExitSurvey({ next }) {
                       className={inputClassName}
                       value={geo}
                       onChange={(e) => setGeo(e.target.value)}
-                      required
                     />
                   </div>
                 </div>
@@ -195,15 +190,15 @@ export function ExitSurvey({ next }) {
                 </div>
               </div>
 <h3 className="text-medium leading-6 font-medium text-gray-900">
-                Gameplay
+                Experiment
               </h3>
               <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                 <label className={labelClassName}>
-                  Did you take notes on what others said?
+                  Do you think the instruction is clear?
                 </label>
 
  <label className={labelClassName}>
-                  Did you find your teammates to be good co-players? Were they telling the truth?
+                  Have you encountered any problem with the interface?
                 </label>
                 <textarea
                   className={inputClassName}
@@ -213,7 +208,6 @@ export function ExitSurvey({ next }) {
                   rows={4}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  required
                 />
 
                
@@ -225,7 +219,6 @@ export function ExitSurvey({ next }) {
                   rows={4}
                   value={teammates}
                   onChange={(e) => setTeammates(e.target.value)}
-                  required
                 />
               </div>
               <h3 className="text-medium leading-6 font-medium text-gray-900">
@@ -241,7 +234,7 @@ export function ExitSurvey({ next }) {
                 </label>
 
                 <label className={labelClassName}>
-                  Feedback, including problems you encountered.
+                  General feedback, including problems you encountered.
                 </label>
 
                
@@ -254,7 +247,6 @@ export function ExitSurvey({ next }) {
                   rows={4}
                   value={strength}
                   onChange={(e) => setStrength(e.target.value)}
-                  required
                 />
 
                 <textarea
@@ -265,7 +257,6 @@ export function ExitSurvey({ next }) {
                   rows={4}
                   value={fair}
                   onChange={(e) => setFair(e.target.value)}
-                  required
                 />
 
                 <textarea
