@@ -17,21 +17,20 @@ export function Consent({ next }) {
             participate in this experiment. 
           </p><br/>
           <p>
-            <strong>What you will do in this research:</strong> You will play a series of communication 
-            games with other participants: describing the amount of animals you see, 
-            with the goal of all agreeing on how relatively many there are.
+            <strong>What you will do in this research:</strong> You will read and annotate a transcript of a conversation. You will label shifts in topic in the conversation.
           </p> <br/>
           <p>
-            <strong>Time required:</strong> This study will take approximately twenty minutes.
+            <strong>Time required:</strong> This study will take approximately twenty (20) minutes.
           </p><br/>
           <p>
-            <strong>Purpose of the research:</strong> The purpose is to understand how an agreement is reached in a networked community.
+            <strong>Purpose of the research:</strong> The purpose is to understand how people navigate topics in conversation with strangers. Your annotations will help us characterize the topics in these previously recorded conversations.
           </p><br/>
           <p>
             <strong>Risks:</strong> There are no anticipated risks associated with participating in this study. The effects should be comparable to viewing a computer monitor and using a mouse for the duration of the experiment.
+             If you find the content of the conversation upsetting in any way, you can end the study at any time.
           </p><br/>
           <p>
-            <strong>Compensation:</strong> You will receive x for completing the experiment and a performance bonus of up to x.
+            <strong>Compensation:</strong> You will receive $5 for completing the experiment.
           </p><br/>
           <p>
             <strong>Confidentiality:</strong> Your participation in this study will remain confidential. No personally identifiable information will be collected. Your anonymous data may be shared with other researchers and used in future projects.
@@ -40,9 +39,8 @@ export function Consent({ next }) {
             <strong>Participation and withdrawal:</strong> Your participation in this study is completely voluntary and you may refuse to participate or choose to withdraw at any time without penalty or loss of benefits to which you are otherwise entitled.
           </p><br/>
           <p>
-            <strong>How to contact the researcher:</strong> f you have questions or
-        concerns about your participation or payment, or want to request a
-        summary of research findings, please contact  <a href="mailto:yzubak@wisc.edu">yzubak@wisc.edu</a>.
+            <strong>How to contact the researcher:</strong> If you have questions or concerns about your participation or payment, or want to request a
+        summary of research findings, please contact  <a href="mailto:czhou249@wisc.edu">czhou249@wisc.edu</a>.
           </p><br/>
           <p>
             <strong>Who to contact about your rights in this research:</strong> For

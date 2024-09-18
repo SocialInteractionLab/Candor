@@ -196,7 +196,7 @@ async function listAllFiles(query) {
   }
 
 // Function to get a specific file based on the count
-async function getFile() {
+async function getFile(fileNumber) {
     try {
         await auth.getAccessToken();
         const allFiles = await listAllFiles("name = 'transcript_backbiter.csv'");
@@ -204,6 +204,12 @@ async function getFile() {
             throw new Error('No files found with the specified query.');
         }
         let count = await readCount();
+        let increment = true;
+        if (fileNumber || fileNumber == 0){
+          count = fileNumber;
+          increment = false
+          console.log(`navigate to file[${fileNumber}]`)
+        }
         if (count >= allFiles.length) {
             const data = await fs.readFile(filePath, 'utf8');
             const jsonData = JSON.parse(data);
@@ -217,8 +223,9 @@ async function getFile() {
             content: await getFileContent(allFiles[count].id),
             file_id: await getGrandparentFolderName(allFiles[count].id)
         };
-
-        await incrementCount();
+        if (increment){
+          await incrementCount();
+        }
         return file;
     } catch (error) {
         console.error(`Error fetching file: ${error.message}`);

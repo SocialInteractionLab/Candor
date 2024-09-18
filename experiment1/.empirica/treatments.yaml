@@ -9,12 +9,21 @@ factors:
         - value: 8
         - value: 13
         - value: 4
+        - value: 10
     - name: opinion
       values:
         - value: text
         - value: slider
+        - value: fjeawoijf
+    - name: fileNumber
+      values:
+        - value: 0
 treatments:
     - name: experiment1
       factors:
         opinion: slider
+        playerCount: 1
+    - name: test
+      factors:
+        fileNumber: 0
         playerCount: 1

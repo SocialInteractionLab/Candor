@@ -1,5 +1,5 @@
 import { usePlayer } from "@empirica/core/player/classic/react";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
 
@@ -20,6 +20,18 @@ export function ExitSurvey({ next }) {
   const [politics, setPolitics] = useState("");
   const [geo, setGeo] = useState("");
   const [ethnicity, setEthnicity] = useState("");
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
 
   function handleSubmit(event) {

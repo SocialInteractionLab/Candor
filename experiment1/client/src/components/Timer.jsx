@@ -12,7 +12,7 @@ export function Timer() {
   return (
     <div className="flex flex-col items-center">
       <h1 className="tabular-nums text-3xl text-gray-500 font-semibold">
-        {humanTimer(remaining)}
+        {/* {humanTimer(remaining)} */}
       </h1>
     </div>
   );

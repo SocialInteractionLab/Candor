@@ -26,18 +26,20 @@ const csvFilePath = path.join(__dirname, 'Intro_example.csv');
 const intro_example = parseCSV(csvFilePath);
 
 Empirica.onGameStart(({ game }) => {
-  getFile().then((file) => {
-    game.set('data', file.content)
-    game.set('conversation_id', file.file_id)
-    console.log('file loaded')
-    const round = game.addRound({
-      name: "Candor",
-      task: "Candor",
+  const { fileNumber } = game.get("treatment");
+  console.log(fileNumber)
+    getFile(fileNumber).then((file) => {
+      game.set('data', file.content)
+      game.set('conversation_id', file.file_id)
+      console.log('file loaded')
+      const round = game.addRound({
+        name: "Candor",
+        task: "Candor",
+      })
+      round.addStage({name: "Instruction", duration: 30000000})
+      round.addStage({name: "Annotation", duration: 30000000 })
+  
     })
-    round.addStage({name: "Instruction",duration: 6000, })
-    round.addStage({name: "Annotation", duration: 9000 })
-
-  })
 });
 
 Empirica.onRoundStart(({ round }) => {

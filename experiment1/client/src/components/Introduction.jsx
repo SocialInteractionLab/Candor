@@ -21,35 +21,43 @@ export function Introduction() {
   return (
     <div className="flex flex-col items-center justify-center w-screen p-6 space-y-6 bg-gray-100">
       <p className="text-lg text-center mb-4">
-        In this experiment, you will be annotating an online conversation
-        between two people and marking the change in the topic within this
-        conversation.
+        In this experiment, you will be reading an online conversation between two people and marking points in the 
+        conversation when they switch which topic they’re talking about.
+      </p>
+
+      <p className="text-lg text-red-500 text-center mb-4">
+        *Ignore the timers on all the following examples, you are not being timed in this experiment
       </p>
 
       <h1 className="text-2xl font-bold mb-4">Experiment Interface</h1>
       <div className="flex flex-col items-center mb-4">
         <img
           className="w-full max-w-4xl mb-4"
-          src="/Intro_interface.png"
+          src="/Starting_Interface.png"
           alt="Experiment Interface"
         />
         <img
           className="w-full max-w-4xl"
-          src="/Intro_finish.png"
+          src="/side_panel.png"
           alt="Finish Interface"
         />
       </div>
 
       <h1 className="text-2xl font-bold mb-4">Annotating an Utterance</h1>
+      <img
+        className="w-full max-w-4xl mb-4"
+        src="/interface_explain.png"
+        alt="Annotation Flow"
+      />
+
       <ul className="list-disc list-inside mb-4">
         <li className="mb-2">
-          Click on the utterance you want to annotate. An input box will appear
-          on the side. Type in the topic shift and click Submit.
+        When you see a point in the conversation when a new topic is introduced, 
+        click on the message you want to annotate. An input box will appear on the side. Type in the new topic and click Submit.
         </li>
         <li className="mb-2">
-          Annotated history will appear above the utterance once it has been
-          annotated. To delete an annotation, click the ‘x’ mark next to the
-          annotated history.
+        Annotated history will appear above the utterance once it has been annotated. To delete an annotation, 
+        click the ‘x’ mark next to the annotated history.
         </li>
         <li>To change an annotation, simply submit a new annotation.</li>
       </ul>
@@ -60,23 +68,43 @@ export function Introduction() {
         alt="Annotation Flow"
       />
 
+      <p className="text-lg text-center mb-4">
+        Here is a gif showing this process.
+        </p>
+      <img
+        className="w-full max-w-4xl mb-4"
+        src="/annotation.gif"
+        alt="Annotation animate"
+      />
+
+
+      <h1 className="text-2xl font-bold mb-4">Finish</h1>
+        <p className="text-lg text-center mb-4">
+        Once you have finished annotating the entire conversation, scroll to the end. If you haven’t already, a 'Finish' button will appear.
+        Click the 'Finish' button, which will take you to an exit-survey.
+        </p>
+
+        <img
+        className="w-full max-w-4xl mb-4"
+        src="/Intro_finish.png"
+        alt="Annotation Flow"
+      />
+
       <h1 className="text-2xl font-bold mb-4">General Rule of Thumb</h1>
       <ul className="list-disc list-inside">
-        <li>
-          It is normal for some utterances to not make sense; try your best to
-          comprehend them.
+        <li className="mb-2">
+          Some utterances won’t make sense due to transcription errors; try your best to comprehend them.
         </li>
         <li className="mb-2">
-          Annotate only the new topic—the topic to which the conversation is
-          shifting. The previous topic is provided for reference only.
+        Annotate only the new topic—the topic to which the conversation is shifting. 
+        The previous topic is provided as a reminder of your previous annotations.
         </li>
         <li className="mb-2">
-          Ensure that your topic input is clear and concise. Avoid
-          over-annotating.
+        Ensure that the topic labels are clear and concise. Try to provide topic labels that are one or two words, rather than sentences. 
+        Avoid over-annotating.
         </li>
         <li>
-          A "Finish" button will appear once you have scrolled through the
-          entire conversation.
+          A "Finish" button will appear once you have scrolled through the entire conversation.
         </li>
       </ul>
 
