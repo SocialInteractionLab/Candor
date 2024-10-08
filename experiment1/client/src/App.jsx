@@ -4,6 +4,7 @@ import { EmpiricaMenu, EmpiricaParticipant } from "@empirica/core/player/react";
 import React from "react";
 import { Game } from "./Game";
 import { ExitSurvey } from "./intro-exit/ExitSurvey";
+import { PlayerCreate } from "./PlayerCreate.jsx";
 
 
 
@@ -33,7 +34,7 @@ export default function App() {
       <div className="h-screen relative">
         <EmpiricaMenu position="bottom-left" />
         <div className="h-full overflow-auto">
-          <EmpiricaContext introSteps={introSteps} exitSteps={exitSteps}>
+          <EmpiricaContext playerCreate = {PlayerCreate} introSteps={introSteps} exitSteps={exitSteps}>
               <Game />
           </EmpiricaContext>
         </div>

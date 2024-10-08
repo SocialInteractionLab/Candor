@@ -210,7 +210,9 @@ async function getFile(fileNumber) {
           increment = false
           console.log(`navigate to file[${fileNumber}]`)
         }
-        if (count >= allFiles.length) {
+        // changed for dense subset
+        // allFiles.length
+        if (count >= 200) {
             const data = await fs.readFile(filePath, 'utf8');
             const jsonData = JSON.parse(data);
             jsonData.count = 0;
@@ -219,6 +221,7 @@ async function getFile(fileNumber) {
         }
 
         const file = {
+            count_no: count,
             info: allFiles[count],
             content: await getFileContent(allFiles[count].id),
             file_id: await getGrandparentFolderName(allFiles[count].id)
@@ -234,5 +237,5 @@ async function getFile(fileNumber) {
 }
 
 module.exports = {
-    getFile, 
+    getFile
 };

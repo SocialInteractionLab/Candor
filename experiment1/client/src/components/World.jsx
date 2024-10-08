@@ -16,6 +16,7 @@ export function World() {
   const game = useGame();
   const data = game.get("data");
   const player = usePlayer();
+  const playerName = usePlayerID();
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [markedIndices, setMarkedIndices] = useState([]);
@@ -165,6 +166,7 @@ export function World() {
         currentUtterance: currentUtterance.utterance,
         previous_topic: prevtopic,
         new_topic: newtopic,
+        participent_id: playerName,
         time: Date.now(),
       });
     }

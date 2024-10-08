@@ -238,7 +238,7 @@ export function ExitSurvey({ next }) {
               </h3>
               <div className="grid grid-cols-3 gap-x-6 gap-y-3">
                 <label className={labelClassName}>
-                  How would you describe your strength in the game?
+                  How would you describe your strength in the experiment?
                 </label>
 
                 <label className={labelClassName}>
