@@ -235,8 +235,10 @@ export function World() {
           </div>
           <div className="mt-4 p-2 bg-gray-100 rounded shadow-md w-full flex justify-center items-center flex-col">
             <p className="text-sm">
-              Use these buttons to navigate through annotated utterances, A finish button will appear once you finish scrolling the whole conversation
+              Use these buttons to navigate through annotated utterances, A finish button will appear once you finish scrolling the whole conversation.
             </p>
+
+            <p className="text-sm font-bold">If the finish button is not showing up for any reason, submit with "nocode" or contact researcher, you will still be compensated.</p>
             <div className="flex mt-2 space-x-2">
               <button
                 onClick={handlePrevious}

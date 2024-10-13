@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "@empirica/core": "1.8.10",
+    "@empirica/core": "1.11.6",
     "csv-parse": "^5.5.6",
     "csv-stringify": "^6.5.0",
     "fs": "^0.0.1-security",
@@ -21,7 +21,7 @@
     "serve": "node --trace-warnings --enable-source-maps --unhandled-rejections=warn-with-error-code index.js"
   },
   "volta": {
-    "node": "16.17.0",
-    "npm": "8.15.0"
+    "node": "20.11.1",
+    "npm": "10.2.4"
   }
 }

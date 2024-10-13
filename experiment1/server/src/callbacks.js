@@ -1,6 +1,6 @@
 import { ClassicListenersCollector } from "@empirica/core/admin/classic";
 export const Empirica = new ClassicListenersCollector();
-import _ from "lodash";
+// import _ from "lodash";
 import fs from "fs";
 import path from "path";
 import { parse } from "csv-parse/sync";
