@@ -1,0 +1,228 @@
+---
+title: "CANDOR - Pilot Data Testing"
+author: "Helen Schmidt"
+date-modified: today
+format: pdf
+toc: true
+self-contained: true
+---
+
+```{r}
+# packages
+library(scales)
+library(tidyverse)
+```
+
+```{r}
+# load processed annotation data
+# HS HOME
+df <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/pilot-data-processed.csv")
+# HS LAB
+# df <- read.csv("/Users/tuo70125/My Drive/SANLab/Experiments/CANDOR/analysis/data/pilot-data-processed.csv")
+
+# preview
+head(df)
+
+# print number of conversations
+df |>
+  summarize(num_convos = length(unique(transcript_id))) 
+
+# rescale turn ids so each convo is 0 - 1
+df <- df |>
+  group_by(transcript_id) |>
+  mutate(scaled_turn_id = rescale(turn_id))
+```
+
+## CHECKING DENSE SUBSET PILOT
+```{r}
+# load data
+df <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/dense_subset1-processed.csv")
+
+# preview
+head(df)
+
+# print number of conversations
+length(unique(df$transcript_id))
+# print number of participants
+length(unique(df$participent_id))
+
+# rescale turn ids so each convo is 0 - 1
+df <- df |>
+  group_by(transcript_id) |>
+  mutate(scaled_turn_id = rescale(turn_id))
+
+# how many annotations per participant?
+df |>
+  group_by(participent_id) |>
+  summarize(annotation_count = length(unique(new_topic))) |>
+  mutate(mean_count = sum(annotation_count)/length(annotation_count)) |>
+  arrange(annotation_count)
+
+# how long did task take?
+df$time <- as.numeric(df$time)
+df |>
+  filter(!is.na(time)) |>
+  group_by(participent_id) |>
+  summarize(elapsed_time = (max(time) - min(time))/60000) |> # change elapsed time to minutes
+  mutate(mean_elapsed_time = sum(elapsed_time)/length(elapsed_time)) |>
+  arrange(elapsed_time)
+```
+
+
+## ANNOTATED TRANSITIONS
+How many topic transitions were annotated by each participant?
+
+For the full dataset, we'll need participant numbers, but for now, I'm just doing per conversation (1 transcript = 1 participant).
+
+```{r}
+df |>
+  group_by(transcript_id) |>
+  summarize(annotation_count = length(unique(new_topic))) |>
+  mutate(mean_count = sum(annotation_count)/length(annotation_count)) |>
+  arrange(annotation_count) |>
+  print() |>
+  ggplot(aes(x = annotation_count)) +
+  geom_histogram(binwidth = 1) +
+  geom_vline(aes(xintercept = mean_count), color = "lightblue", linewidth = 1.5, linetype = "dashed") +
+  theme_minimal()
+```
+
+## EXTEND TOPICS
+I'm going to fill the empty cells between annotations with the current topic. This will then remove missing values and `new_topic` will contain all topics, allowing me to calculate topic lengths later on.
+
+```{r}
+# populate new_topic names across turns until topic change
+df <- df |>
+  group_by(transcript_id) |>
+  fill(new_topic, .direction = "down")
+
+# preview
+head(df)
+```
+
+## TOPIC LENGTHS
+How many long is each topic within a conversation?
+
+```{r}
+df |>
+  group_by(transcript_id, new_topic) |>
+  summarize(topic_length = length(new_topic)) |>
+  summarize(avg_topic_turns = mean(topic_length)) |>
+  arrange(avg_topic_turns) |>
+  print() |>
+  ggplot(aes(x = avg_topic_turns)) +
+  geom_histogram(binwidth = 1) +
+  theme_minimal()
+```
+
+## CONVERSATION TRAJECTORIES
+I'm going to plot the flow of topics for a test conversation.
+
+```{r}
+# subset to example conversation
+test <- subset(df, transcript_id == "128f15b9-a6e4-4575-8b96-163ff189ee8e")
+
+# get length of turns for each topic
+test |>
+  group_by(new_topic) |>
+  mutate(topic_length = length(new_topic)) |>
+  ggplot() +
+  geom_line(aes(x = scaled_turn_id, y = topic_length)) +
+  annotate(geom = "text", x = 0.1, y = 65, label = "technical issues") +
+  annotate(geom = "text", x = 0.33, y = 45, label = "california wildfire\nweathee evacuation") +
+  annotate(geom = "text", x = 0.65, y = 42, label = "furlough") +
+  annotate(geom = "text", x = 0.75, y = 54, label = "healthcare") +
+  annotate(geom = "text", x = 0.9, y = 72, label = "job") +
+  theme_minimal()
+
+# what are the longest topics?
+test |>
+  group_by(new_topic) |>
+  summarize(topic_length = length(new_topic),
+            start_turn = min(scaled_turn_id)) |>
+  slice_max(n = 5, order_by = topic_length) |>
+  arrange(start_turn)
+
+```
+
+Now let's do this for all conversations.
+
+```{r}
+# get length of turns for each topic
+df |>
+  group_by(new_topic, transcript_id) |>
+  mutate(topic_length = length(new_topic)) |>
+  ggplot() +
+  facet_wrap(.~transcript_id) +
+  geom_line(aes(x = scaled_turn_id, y = topic_length)) +
+  theme_minimal()
+```
+
+## TASK COMPLETION LENGTH
+How long did it take participants to annotate the conversation?
+
+```{r}
+# make sure time is numeric
+df$time <- as.numeric(df$time)
+df |>
+  filter(!is.na(time)) |>
+  group_by(transcript_id) |>
+  summarize(elapsed_time = (max(time) - min(time))/60000) |> # change elapsed time to minutes
+  mutate(mean_elapsed_time = sum(elapsed_time)/length(elapsed_time))
+```
+
+## TOPIC LIST
+What topic labels did participants provide?
+
+```{r}
+# all topics
+unique(df$new_topic)
+
+# topics by conversation
+print <- df |>
+  group_by(transcript_id) |>
+  summarize(topics = unique(new_topic))
+
+# show
+print |> print(n = 370)
+```
+
+## EXPORT FOR PYTHON
+Export the topic labels, utterances, and transcript IDs for further analysis in Python.
+
+```{r}
+# create new data frame to save
+save <- df |>
+  select(scaled_turn_id, new_topic, utterance, speaker, transcript_id)
+# save 
+#write.csv(save, "/Users/tuo70125/My Drive/SANLab/Experiments/CANDOR/analysis/data/data-for-python.csv", row.names = FALSE)
+```
+
+## TOPIC UTTERANCE SIMILARITY
+How similar (cosine similarity) is each utterance to the assigned topic label?
+
+```{r}
+# load cosine similarity data
+#cosine <- read.csv("/Users/tuo70125/My Drive/SANLab/Experiments/CANDOR/analysis/data/utterance-topic-cosine.csv")
+cosine <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/utterance-topic-cosine.csv")
+# remove first column from python
+cosine <- cosine[,-1]
+# format similarity column to remove tensor() and make numeric
+cosine$topic_utterance_similarity <- gsub("tensor\\(([^)]+)\\)", "\\1", cosine$topic_utterance_similarity)
+cosine$topic_utterance_similarity <- as.numeric(cosine$topic_utterance_similarity)
+
+# plot
+ggplot(data = cosine, aes(x = scaled_turn_id, y = topic_utterance_similarity)) +
+  facet_wrap(.~transcript_id) +
+  geom_line(linewidth = 0.1) +
+  theme_minimal()
+
+# smooth curve
+ggplot(data = cosine, aes(x = scaled_turn_id, y = topic_utterance_similarity)) +
+  facet_wrap(.~transcript_id) +
+  geom_smooth(linewidth = 0.5, se = FALSE) +
+  theme_minimal()
+
+```
+
+

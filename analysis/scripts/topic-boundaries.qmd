@@ -1,0 +1,282 @@
+---
+title: "Topic Boundaries"
+format: 
+  html:
+    code-overflow: wrap
+    toc: true
+editor: visual
+author: Helen Schmidt
+date-modified: today
+theme: journal
+---
+
+The goal of this document is to understand human-designated topic changes in a selection of CANDOR conversations and gather insights to create a standardized workflow for future annotations.
+
+### Load packages
+
+```{r warning=FALSE,message=FALSE}
+library(tidyverse)       # obviously
+library(geomtextpath)    # create density curves with topic labels
+library(GrpString)       # find patterns among groups of strings
+library(tidytext)        # tokenization
+```
+
+### Import data
+
+```{r}
+#df <- read.csv("/Volumes/GoogleDrive/My Drive/SANLab/Experiments/CANDOR/analysis/data/example.csv")
+df <- read.csv("/Users/tuo70125/My Drive/SANLab/Experiments/CANDOR/analysis/data/example.csv")
+head(df)
+
+# print some information about data
+paste0("Number of unique human coders = ", length(unique(df$coder)), sep = "")
+paste0("Number of conversations = ", length(unique(df$conversation)), sep = "")
+paste0("Number of unique speakers = ", length(unique(df$speaker)), sep = "")
+```
+
+### Format topic changes
+
+```{r}
+# make topic change 1 = change, 0 = no change
+df$topic_change[is.na(df$topic_change)] <- 0
+# make coder, conversation #, and speaker factor variables
+df$coder <- as.factor(df$coder)
+df$speaker <- as.factor(df$speaker)
+df$conversation <- as.factor(df$conversation)
+
+# populate topic names across turns until topic change
+df$topic_label[df$topic_label == ""] <- NA
+df <- df |>
+  group_by(coder) |>
+  fill(topic_label, .direction = "down")
+head(df)
+```
+
+```{r}
+# create separate df for change points
+df.change <- subset(df, topic_change == 1)
+head(df.change)
+```
+
+## Topic patterns
+
+How many unique topic labels are created for each conversation across four annotators?
+
+```{r}
+# convo 1
+unique(df$topic_label[!is.na(df$topic_label) & df$conversation == "1"])
+# convo 2
+unique(df$topic_label[!is.na(df$topic_label) & df$conversation == "2"])
+# convo 3
+unique(df$topic_label[!is.na(df$topic_label) & df$conversation == "3"])
+```
+
+```{r}
+# https://journal.r-project.org/archive/2018/RJ-2018-002/RJ-2018-002.pdf
+# testing a string grouping package to see if I can identify larger themes among topic labels - QUANT
+
+# create vector of unique topic labels
+# one vector for each conversation
+labels1 <- unique(df$topic_label[!is.na(df$topic_label) & df$conversation == "1"])
+labels2 <- unique(df$topic_label[!is.na(df$topic_label) & df$conversation == "2"])
+labels3 <- unique(df$topic_label[!is.na(df$topic_label) & df$conversation == "3"])
+
+# transition entropy (Shannon entropy formula)
+# diversity of transitions in a group of strings; larger values reflect more evenly distributed transitions and smaller values relect more biased distribution of transitions
+
+# overall transition entropy
+TransEntro(labels1)
+TransEntro(labels2)
+TransEntro(labels3)
+
+# transition entropy for each string
+entropy1 <- as.data.frame(TransEntropy(labels1))
+entropy2 <- as.data.frame(TransEntropy(labels2))
+entropy3 <- as.data.frame(TransEntropy(labels3))
+# add topic labels
+entropy1$labels <- labels1
+entropy2$labels <- labels2
+entropy3$labels <- labels3
+# print
+entropy1
+entropy2
+entropy3
+
+# try string clustering (using hierarchical clustering; exports a dendrogram to help suggest number of clusters)
+StrHclust(labels1)
+StrHclust(labels2)
+StrHclust(labels3)
+
+# k-means clustering
+# try range of 1-4 clusters (are general themes across coder labels present?)
+# convo 1
+for(i in 1:4) {
+  StrKclust(labels1, nclust = i)
+}
+# convo 2
+for(i in 1:4) {
+  StrKclust(labels2, nclust = i)
+}
+# convo 3
+for(i in 1:4) {
+  StrKclust(labels3, nclust = i)
+}
+```
+
+```{r}
+# more qualitative text analysis using tidytext package
+# loop through for each conversation
+
+for (i in 1:3) {
+  # select current labels
+  if (i == 1) {
+    current.label <- labels1
+  } else if (i == 2) {
+    current.label <- labels2
+  } else if (i == 3) {
+    current.label <- labels3
+  }
+  # tokenize labels for each conversation
+  df.labels <- tibble(text = current.label)
+  label.tokens <- df.labels |>
+  unnest_tokens(output = word,
+                input = text)
+  # get unique tokens
+  unique(label.tokens$word)
+  # remove some tokens
+  label.tokens <- subset(label.tokens, label.tokens$word != "of" & 
+                 label.tokens$word != "to" &
+                 label.tokens$word != "vs" &
+                 label.tokens$word != "are")
+  # plot
+  print(label.tokens |>
+  count(word) |>
+  subset(n >= 2) |> # remove instances of 1
+  ggplot(aes(x = word, y = n, fill = n > 2)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("lightblue","orange")) +
+  scale_color_manual(values = c("lightblue", "orange")) +
+  labs(title = "Tokenized topic count across coders",
+       subtitle = paste0("Conversation #", as.character(i), sep = "")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        legend.position = "none"))
+}
+
+```
+
+## Boundary locations
+
+Where do topic change points occur, according to human annotators?
+
+```{r warning=FALSE}
+# area peaks; y axis value = number of coders that agreed that turn was topic change
+ggplot(data = df, aes(x = turn_id, y = topic_change, fill = coder)) +
+  facet_wrap(~conversation, ncol = 1) +
+  geom_area() +
+  scale_x_continuous("Turn ID", limits = c(0,375),
+                     breaks = c(0,50,100,150,200,250,300,350,400)) +
+  labs(title = "Topic change point agreement across coders",
+       subtitle = "Peak refers to number of coders that agreed turn was topic change",
+       y = "Topic Change Point") +
+  theme_minimal()
+```
+
+```{r warning=FALSE}
+ggplot(data = df, aes(x = turn_id, y = topic_change, color = coder)) +
+  facet_wrap(~conversation, ncol = 1) +
+  geom_vline(data = df.change, 
+             aes(xintercept = turn_id,
+                 color = coder)) +
+  scale_x_continuous("Turn ID", limits = c(0,375),
+                     breaks = c(0,50,100,150,200,250,300,350,400)) +
+  labs(title = "Topic change point agreement across coders",
+       subtitle = "Line refers to topic change point across conversation",
+       caption = "Line color refers to agreement between coders (i.e., blue = 3, purple = all)",
+       y = NULL) +
+  theme_minimal()
+```
+
+## Topic length
+
+How long do conversation partners spend on each topic?
+
+```{r warning=FALSE}
+ggplot(data = df, aes(x = turn_id, y = topic_change, color = topic_label)) +
+  facet_wrap(conversation~coder) +
+  geom_vline(aes(xintercept = turn_id, color = topic_label)) +
+  scale_x_continuous("Turn ID", limits = c(0,375)) +
+  labs(title = "Time spent in each topic",
+       subtitle = "Color refers to topic, grid row refers to conversation number, grid column refers to coder",
+       y = NULL) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+#### "High agreement" example
+
+Conversation 3, turn_id = 118. Every coder agreed this was a topic change, and upon further investigation, all coders identified the new topic with a consistent label.
+
+```{r}
+# example turn id = 118
+test <- subset(df, turn_id == 118 & conversation == "3")
+test.labels <- test$topic_label
+test.labels
+# example theme: travel
+test <- subset(df, conversation == "3")
+test <- subset(test, topic_label %in% test.labels)
+
+ggplot(data = test) + 
+  geom_textdensity(aes(x = turn_id, group = coder, color = coder,
+                        label = topic_label), hjust = 0.5, vjust = 0.3, size = 5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_x_continuous("Turn ID", limits = c(0,375),
+                     breaks = c(0,50,100,150,200,250,300,350,400))
+```
+
+#### "Low agreement" example
+
+Conversation 1, turn_id = 175, a lot of disagreement about topic changes across coders. Peaks don't overlap and upon further investigation, topics don't match up either.
+
+```{r}
+# example turn id = 175
+test <- subset(df, turn_id == 175 & conversation == "1")
+test.labels <- test$topic_label
+test.labels
+# example theme: social injustice
+test <- subset(df, conversation == "1")
+test <- subset(test, topic_label %in% test.labels)
+
+ggplot(data = test) + 
+  geom_textdensity(aes(x = turn_id, group = coder, color = coder,
+                        label = topic_label), hjust = 0.5, vjust = 0.3, size = 5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_x_continuous("Turn ID", limits = c(0,375),
+                     breaks = c(0,50,100,150,200,250,300,350,400))
+```
+
+## Speakers and topic changes
+
+Are certain speakers driving topic changes?
+
+```{r}
+ggplot(data = df, aes(x = turn_id, y = topic_change, color = speaker)) +
+  facet_wrap(conversation~coder) +
+  geom_vline(data = df.change,
+             aes(xintercept = turn_id, color = speaker)) +
+  scale_x_continuous("Turn ID", limits = c(0,375)) +
+  labs(title = "Topic change point by speaker",
+       subtitle = "Vertical line indicates change point, grid row = conversation number, grid column = coder",
+       y = NULL) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## Takeaways
+
+1.  Topic change point labels should identify the start of a new topic (e.g., "travel"), not mark a transition from one topic to another (e.g., "volunteering to travel").
+2.  One to two word topics are probably the best to be able to identify broader themes within and across conversations.
+3.  Multiple levels of granularity for topics? Broader themes + distinct topic change points?
+4.  
