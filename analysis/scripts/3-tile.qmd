@@ -1,0 +1,254 @@
+---
+title: "CANDOR - Tiling"
+author: "Helen Schmidt"
+date-modified: today
+format: 
+  html:
+    code-overflow: wrap
+    toc: true
+self-contained: true
+theme: flatly
+---
+
+```{r}
+library(scales)
+library(tidyverse)
+library(geomtextpath)
+library(correlation)
+library(Rmisc)
+```
+
+# EXAMPLE CONVO
+```{r}
+# load tiling data
+tile2 <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/Candor/analysis/output/example_convo_tile_2.csv")
+tile2 <- tile2[,-1]
+
+tile5 <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/Candor/analysis/output/example_convo_tile_5.csv")
+tile5 <- tile5[,-1]
+
+tile10 <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/Candor/analysis/output/example_convo_tile_10.csv")
+tile10 <- tile10[,-1]
+```
+
+```{r}
+# load annotation data
+df <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/dense_subset1_and_subset2_processed.csv")
+
+# rename participant ID column
+names(df)[21] <- "PID"
+
+# only select example tile conversation
+df <- df |>
+  filter(transcript_id == "cb056010-c50e-4e80-b639-bb178a2b9330")
+
+annotation_locations <- df |>
+  ungroup() |>
+  select(new_topic, turn_id) |>
+  filter(!is.na(new_topic))
+```
+
+```{r}
+tile2 |>
+  ggplot(aes(x = A_start_turn, y = cosine_similarity)) +
+  geom_line(color = "#DBD3D8", alpha = 0.4) +
+  geom_point(alpha = 0) +
+  geom_smooth(color = "#DBD3D8", fill = "#DBD3D8") +
+  labs(x = "turn number", y = "cosine similarity", title = "window length = 2") +
+  ylim(NA, 0.7) +
+  theme_classic()
+
+tile5 |>
+  ggplot(aes(x = A_start_turn, y = cosine_similarity)) +
+  geom_line(color = "#D8B4A0", alpha = 0.25) +
+  geom_point(alpha = 0) +
+  geom_smooth(color = "#D8B4A0", fill = "#D8B4A0") +
+  labs(x = "turn number", y = "cosine similarity", title = "window length = 5") +
+  ylim(NA, 0.7) +
+  theme_classic()
+
+tile10 |>
+  ggplot(aes(x = A_start_turn, y = cosine_similarity)) +
+  geom_line(color = "#D77A61", alpha = 0.25) +
+  geom_point(alpha = 0) +
+  geom_smooth(color = "#D77A61", fill = "#D77A61") +
+  labs(x = "turn number", y = "cosine similarity", title = "window length = 10") +
+  ylim(NA, 0.7) +
+  theme_classic()
+
+```
+
+```{r}
+# identify change points (i.e., from low > high or from high > low similarity)
+
+# create function to detect > x% transition in similarity from one row to next
+detect_transitions <- function(df, threshold_percentage) {
+  # compute difference in cosine similarity between consecutive rows
+  diff_values <- diff(df$cosine_similarity)
+  # find low-to-high (increase greater than threshold)
+  low_high <- diff_values > threshold_percentage * df$cosine_similarity[-length(df$cosine_similarity)]
+  # find high-to-low (decrease greater than threshold)
+  high_low <- diff_values < -threshold_percentage * df$cosine_similarity[-length(df$cosine_similarity)]
+  # save transition flags into a new data frame
+  result <- data.frame(
+    row_number = 2:nrow(df), # since diff is length n - 1
+    low_to_high_transitions = low_high,
+    high_to_low_transitions = high_low)
+  # add first row filler to result
+  result <- rbind(c(1, NA, NA), result)
+  
+  return(result)
+}
+
+```
+
+```{r}
+# detect transitions with my function (20% change)
+tile2_transitions <- detect_transitions(tile2, 0.2)
+tile5_transitions <- detect_transitions(tile5, 0.2)
+tile10_transitions <- detect_transitions(tile10, 0.2)
+
+# merge with tile data
+tile2 <- merge(tile2, tile2_transitions, by.x = "A_start_turn", by.y = "row_number")
+tile5 <- merge(tile5, tile5_transitions, by.x = "A_start_turn", by.y = "row_number")
+tile10 <- merge(tile10, tile10_transitions, by.x = "A_start_turn", by.y = "row_number")
+
+# merge with annotation data
+tile2 <- merge.data.frame(tile2, annotation_locations,
+                          by.x = "A_start_turn", by.y = "turn_id", all = TRUE)
+tile5 <- merge.data.frame(tile5, annotation_locations,
+                          by.x = "A_start_turn", by.y = "turn_id", all = TRUE)
+tile10 <- merge.data.frame(tile10, annotation_locations,
+                          by.x = "A_start_turn", by.y = "turn_id", all = TRUE)
+
+# add topic change dummy coded variable
+tile2$topic_change[is.na(tile2$new_topic)] <- "no"
+tile2$topic_change[!is.na(tile2$new_topic)] <- "yes"
+tile2$topic_change <- factor(tile2$topic_change, levels = c("no", "yes"))
+
+tile5$topic_change <- "no"
+tile5$topic_change[!is.na(tile5$new_topic)] <- "yes"
+tile5$topic_change <- as.factor(tile5$topic_change)
+
+tile10$topic_change <- "no"
+tile10$topic_change[!is.na(tile10$new_topic)] <- "yes"
+tile10$topic_change <- as.factor(tile10$topic_change)
+
+```
+
+```{r}
+# calculate average similarity at topic changes
+tile2_avg <- tile2 |>
+  group_by(topic_change) |>
+  summarize(mean_similarity = mean(cosine_similarity),
+            sd_similarity = sd(cosine_similarity))
+
+# average cosine similarity (window = 2) and topic changes
+ggplot(data = tile2_avg, aes(x = topic_change, y = mean_similarity)) +
+  geom_bar(stat = "identity", color = "#DBD3D8", fill = "#DBD3D8") +
+  theme_classic()
+
+# calculate average similarity at topic changes
+tile5_avg <- tile5 |>
+  group_by(topic_change) |>
+  summarize(mean_similarity = mean(cosine_similarity),
+            sd_similarity = sd(cosine_similarity))
+
+# average cosine similarity (window = 5) and topic changes
+ggplot(data = tile5_avg, aes(x = topic_change, y = mean_similarity)) +
+  geom_bar(stat = "identity", color = "#D8B4A0", fill = "#D8B4A0") +
+  theme_classic()
+
+# calculate average similarity at topic changes
+tile10_avg <- tile10 |>
+  group_by(topic_change) |>
+  summarize(mean_similarity = mean(cosine_similarity),
+            sd_similarity = sd(cosine_similarity))
+
+# average cosine similarity (window = 10) and topic changes
+ggplot(data = tile10_avg, aes(x = topic_change, y = mean_similarity)) +
+  geom_bar(stat = "identity", color = "#D77A61", fill = "#D77A61") +
+  theme_classic()
+
+
+```
+
+```{r, fig.height=10, fig.width=8}
+# WINDOW SIZE 2 #
+# plot cosine similarity trajectory for each annotated topic
+tile2_annotated <- tile2 |>
+  fill(new_topic)
+
+# calculate absolute turn lengths per topic
+tile2_annotated <- tile2_annotated |>
+  group_by(new_topic) |>
+  mutate(absolute_turn_id = 1:n(),
+         avg_topic_similarity = mean(cosine_similarity)) |>
+  select(new_topic, absolute_turn_id, avg_topic_similarity, cosine_similarity)
+
+# plot
+ggplot(data = tile2_annotated, aes(x = absolute_turn_id, y = cosine_similarity)) +
+  facet_wrap(ncol = 6, .~new_topic, scales = "free_x") +
+  geom_hline(aes(yintercept = avg_topic_similarity), color = "grey", linetype='dotted') +
+  geom_point(alpha = 0) +
+  geom_line(color = "#DBD3D8", linewidth = 1.25) +
+  theme_classic()
+
+# WINDOW SIZE 5 #
+# plot cosine similarity trajectory for each annotated topic
+tile5_annotated <- tile5 |>
+  fill(new_topic)
+
+# calculate absolute turn lengths per topic
+tile5_annotated <- tile5_annotated |>
+  group_by(new_topic) |>
+  mutate(absolute_turn_id = 1:n(),
+         avg_topic_similarity = mean(cosine_similarity)) |>
+  select(new_topic, absolute_turn_id, avg_topic_similarity, cosine_similarity)
+
+# plot
+ggplot(data = tile5_annotated, aes(x = absolute_turn_id, y = cosine_similarity)) +
+  facet_wrap(ncol = 6, .~new_topic, scales = "free_x") +
+  geom_hline(aes(yintercept = avg_topic_similarity), color = "grey", linetype='dotted') +
+  geom_point(alpha = 0) +
+  geom_line(color = "#D8B4A0", linewidth = 1.25) +
+  theme_classic()
+
+# WINDOW SIZE 10 #
+# plot cosine similarity trajectory for each annotated topic
+tile10_annotated <- tile10 |>
+  fill(new_topic)
+
+# calculate absolute turn lengths per topic
+tile10_annotated <- tile10_annotated |>
+  group_by(new_topic) |>
+  mutate(absolute_turn_id = 1:n(),
+         avg_topic_similarity = mean(cosine_similarity)) |>
+  select(new_topic, absolute_turn_id, avg_topic_similarity, cosine_similarity)
+
+# plot
+ggplot(data = tile10_annotated, aes(x = absolute_turn_id, y = cosine_similarity)) +
+  facet_wrap(ncol = 6, .~new_topic, scales = "free_x") +
+  geom_hline(aes(yintercept = avg_topic_similarity), color = "grey", linetype='dotted') +
+  geom_point(alpha = 0) +
+  geom_line(color = "#D77A61", linewidth = 1.25) +
+  theme_classic()
+
+```
+
+# ALL TRANSCRIPTS
+
+```{r}
+# using 5 utterance window, look at cosine similarity across all conversations
+all_tile5 <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/data/output/all_candor_tile_5.csv")
+all_tile5 <- all_tile5[,-1]
+
+# average over all transcripts
+all_tile5_summary <- Rmisc::summarySE(all_tile5, measurevar = "cosine_similarity", groupvars = c("A_start_turn"))
+
+# plot
+ggplot(data = all_tile5_summary, aes(x = A_start_turn, y = cosine_similarity)) +
+  geom_point(alpha = 0) +
+  geom_line()
+```
+
