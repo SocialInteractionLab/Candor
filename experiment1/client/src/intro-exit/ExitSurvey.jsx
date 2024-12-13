@@ -133,7 +133,7 @@ export function ExitSurvey({ next }) {
                     />
                   </div>
                 </div>
-                <div className="ml-5">
+                {/* <div className="ml-5">
                   <label htmlFor="email" className={labelClassName}>
                     Political Leaning
                   </label>
@@ -147,7 +147,7 @@ export function ExitSurvey({ next }) {
                       onChange={(e) => setPolitics(e.target.value)}
                     />
                   </div>
-                </div>
+                </div> */}
                 <div className="ml-5">
                   <label htmlFor="email" className={labelClassName}>
                     Nationality / Area
@@ -182,7 +182,7 @@ export function ExitSurvey({ next }) {
                     selected={education}
                     name="education"
                     value="bachelor"
-                    label="US Bachelor's Degree"
+                    label="Bachelor's Degree"
                     onChange={handleEducationChange}
                   />
                   <Radio
@@ -190,6 +190,13 @@ export function ExitSurvey({ next }) {
                     name="education"
                     value="master"
                     label="Master's or higher"
+                    onChange={handleEducationChange}
+                  />
+                  <Radio
+                    selected={education}
+                    name="education"
+                    value="No-high-school"
+                    label="No high school degree"
                     onChange={handleEducationChange}
                   />
                   <Radio
@@ -206,11 +213,11 @@ export function ExitSurvey({ next }) {
               </h3>
               <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                 <label className={labelClassName}>
-                  Do you think the instruction is clear?
+                  Do you think the instructions are clear?
                 </label>
 
  <label className={labelClassName}>
-                  Have you encountered any problem with the interface?
+                  Have you encountered any problems with the interface?
                 </label>
                 <textarea
                   className={inputClassName}
@@ -236,22 +243,22 @@ export function ExitSurvey({ next }) {
               <h3 className="text-medium leading-6 font-medium text-gray-900">
                 Review
               </h3>
-              <div className="grid grid-cols-3 gap-x-6 gap-y-3">
-                <label className={labelClassName}>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                {/* <label className={labelClassName}>
                   How would you describe your strength in the experiment?
-                </label>
+                </label> */}
 
                 <label className={labelClassName}>
                   Do you feel the pay was fair?
                 </label>
 
                 <label className={labelClassName}>
-                  General feedback, including problems you encountered.
+                  General feedback, including other problems you encountered.
                 </label>
 
                
 
-                <textarea
+                {/* <textarea
                   className={inputClassName}
                   dir="auto"
                   id="strength"
@@ -259,7 +266,7 @@ export function ExitSurvey({ next }) {
                   rows={4}
                   value={strength}
                   onChange={(e) => setStrength(e.target.value)}
-                />
+                /> */}
 
                 <textarea
                   className={inputClassName}

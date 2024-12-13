@@ -209,9 +209,10 @@ export function World() {
             ref={scrollRef}
             onScroll={(e) => {
               const element = e.target;
+              const tolerance = 2000;
               if (
                 element.scrollHeight - element.scrollTop <=
-                element.clientHeight
+                element.clientHeight + tolerance
               ) {
                 setFinishScroll(true);
               }

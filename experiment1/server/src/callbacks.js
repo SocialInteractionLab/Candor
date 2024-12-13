@@ -35,8 +35,8 @@ Empirica.onGameStart(({ game }) => {
       game.set('conversation_id', file.file_id) // actual file id
       console.log('file loaded')
       const round = game.addRound({
-        name: "Candor",
-        task: "Candor",
+        name: "Topic Shifts in Conversation",
+        task: "Topic Shifts in Conversation",
       })
       round.addStage({name: "Instruction", duration: 30000000})
       round.addStage({name: "Annotation", duration: 30000000 })

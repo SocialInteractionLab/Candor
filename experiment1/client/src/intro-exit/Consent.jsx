@@ -49,7 +49,7 @@ export function Consent({ next }) {
         harm, please contact the University of Wisconsin-Madison Human Research Protection Program at 608-890-4399 or <a href="mailto:compliance@research.wisc.edu">compliance@research.wisc.edu</a>.
           </p><br/>
         </div>
-        <Button handleClick={next} autoFocus>
+        <Button handleClick={next}>
           <p>Next</p>
         </Button>
       </div>
