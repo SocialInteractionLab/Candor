@@ -1,0 +1,269 @@
+---
+title: "(1) Data and Transcript Processing"
+author: "Helen Schmidt"
+date-modified: today
+format: html
+toc: true
+self-contained: true
+---
+
+# Setup
+```{r, setup, include = FALSE, message = FALSE}
+# set script working directory by checking for user (HS home or lab)
+if (Sys.info()[[7]] == "helenschmidt") {
+  knitr::opts_knit$set(root.dir = "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/")
+} else if (Sys.info()[[7]] == "tuo70125") {
+  knitr::opts_knit$set(root.dir = "/Users/tuo70125/My Drive/SANLab/Experiments/Conversation-Structure/")}
+
+# define CANDOR transcript path
+if (Sys.info()[[7]] == "helenschmidt") {
+  candor <- "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/transcripts/raw"
+} else if (Sys.info()[[7]] == "tuo70125") {
+  candor <- "/Users/tuo70125/My Drive/SANLab/Experiments/CANDOR/transcripts/raw"}
+
+options(max.print=1000000)
+```
+
+```{r, include = FALSE, message = FALSE}
+# packages
+library(scales)
+library(tidyverse)
+```
+
+# 1. Merge Raw Data
+```{r}
+# get all subfolder paths to raw data files
+raw <- list.files("./data/raw/final",
+                  full.names = TRUE,
+                  pattern = "*.csv",
+                  recursive = FALSE)
+# bind data into one data frame
+raw <- do.call(rbind, lapply(raw, function(x) { data = read.csv(x, header = TRUE)
+                                                return(data) }))
+```
+
+# 2. Merge Raw Data w/ Transcripts
+```{r}
+# get a list of annotated transcripts
+annotated_transcripts <- unique(raw$transcript_id)
+
+# get all subfolder paths to backbiter CANDOR transcripts
+# note: takes a while to run
+backbiter <- list.files(candor,
+                        full.names = TRUE,
+                        pattern = "transcript_backbiter.csv",
+                        recursive = TRUE)
+
+# bind backbiter data into one data frame and add transcript_id from folder name
+backbiter <- do.call(rbind, lapply(backbiter, function(x) { data = read.csv(x, header = TRUE)
+                                                       convo = str_extract(x, "(?<=raw/)[^/]+")
+                                                       data$transcript_id = convo
+                                                       return(data)}))
+
+# select only backbiter transcripts that have associated annotations
+backbiter_subset <- subset(backbiter, transcript_id %in% annotated_transcripts)
+
+# merge backbiter transcript data with annotation data
+raw_final <- merge(backbiter_subset, raw, 
+               by = c("transcript_id", "turn_id", "speaker"), 
+               all = TRUE, sort = TRUE)
+
+# select only some variables of interest from backbiter_subset for transcript tiling
+backbiter_subset <- backbiter_subset |>
+  select(turn_id, speaker, transcript_id, utterance)
+
+# rename participant ID variable to PID
+names(raw_final)[21] <- "PID"
+
+# export raw merged data
+write.csv(raw_final, "./data/raw/full_dense_subset_raw.csv", row.names = FALSE)
+
+# save raw_final as df
+df <- raw_final
+
+# print raw number of participants (minus Isaiah test, hence minus 1)
+paste0("Raw number of participants before exclusions = ", length(na.omit(unique(df$PID))) - 1, sep = "")
+
+# remove unnecessary data frames
+rm(backbiter, raw, annotated_transcripts, candor, raw_final)
+```
+
+# 3. Participant exclusions
+
+```{r}
+# how many annotations per participant?
+df |>
+  ungroup() |>
+  group_by(PID) |>
+  summarize(num_annotations = length(unique(new_topic))) |>
+  ggplot(aes(x = num_annotations)) +
+  geom_histogram(binwidth = 1) +
+  theme_minimal()
+
+# get quartiles and median annotation value
+df |>
+  ungroup() |>
+  group_by(PID) |>
+  summarize(num_annotations = length(unique(new_topic))) |>
+  summarize(Q_05 = quantile(num_annotations, 0.05),
+            Q_10 = quantile(num_annotations, 0.1),
+            Q_25 = quantile(num_annotations, 0.25),
+            Q_50 = quantile(num_annotations, 0.5), # median
+            Q_75 = quantile(num_annotations, 0.75),
+            Q_90 = quantile(num_annotations, 0.9),
+            Q_95 = quantile(num_annotations, 0.95))
+
+# exclude participants who made 6 or fewer or 40 or greater annotations
+exclude_by_ann_number <- df |>
+  ungroup() |>
+  group_by(PID) |>
+  summarize(num_annotations = length(unique(new_topic))) |>
+  filter(num_annotations <= 6 | num_annotations >= 40)
+# make list of participant IDs to exclude
+exclude_by_ann_number <- exclude_by_ann_number$PID
+# remove NA from this list
+exclude_by_ann_number <- na.omit(exclude_by_ann_number)
+
+# print (not including Isaiah test, hence - 1)
+paste0("Number of participants excluded due to below/over annotation number thresholds = ", length(exclude_by_ann_number)-1, sep = "")
+
+```
+
+```{r}
+# exclude participants for reasons other than annotation numbers
+
+## | --------------- ID number --------------- | --------------- reason for exclusion --------------- |
+## | [False, 'Isaiah_test', None]              | test ID (included in annotation number exclusion)    |
+## |                                           |                                                      |
+## | ------------------------------------------------------------------------------------------------ |
+
+# exclusion count
+# 307
+
+# actually exclude participants 
+df_excluded_participants <- df |>
+  filter(!(PID %in% exclude_by_ann_number))
+
+# print
+paste0("Final number of included participants = ", length(na.omit(unique(df_excluded_participants$PID))), sep = "")
+
+# re-save excluded participant data frame as df
+df <- df_excluded_participants
+```
+
+```{r}
+# export backbiter subset for tiling
+write.csv(backbiter_subset, "./data/processed/backbiter_subset_for_tiling.csv", row.names = FALSE)
+# remove
+rm(backbiter_subset, df_excluded_participants, exclude_by_ann_number)
+```
+
+# 4. Annotation Checks
+```{r}
+# print number of conversations
+df |> summarize(num_convos = length(na.omit(unique(transcript_id)))) 
+# print number of participants
+df |> summarize(num_PID = length(na.omit(unique(PID))))
+# print number of participants who annotated each transcript
+df |>
+  select(transcript_id, PID) |>
+  dplyr::group_by(transcript_id) |>
+  summarize(number_annotators = length(na.omit(unique(PID)))) |>
+  arrange(-number_annotators)
+
+# re-scale turn ids so each convo is 0 - 1
+df <- df |>
+  group_by(transcript_id) |>
+  arrange(turn_id, .by_group = TRUE) |>
+  mutate(scaled_turn_id = rescale(turn_id))
+```
+
+```{r}
+# select only variables of interest to export
+df_subset <- df |>
+  select(transcript_id, turn_id, scaled_turn_id, PID, speaker, utterance, currentUtterance, previous_topic, new_topic)
+
+# export processed data
+write.csv(df_subset, "./data/processed/dense_subset_processed.csv", row.names = FALSE)
+```
+
+# 5. Topic Label Annotations
+```{r, warning = FALSE, message = FALSE}
+# export participant topic labels for topic clustering
+
+# loop through each participant's annotations, subset to just the transcript they annotated and then to just their PID to get 1) the order of topics labeled and 2) the length of each topic
+
+# get a list of unique participant IDs
+participants <- na.omit(unique(df$PID))
+# create data frame to store duplicate transcripts with filled IDs/new_topic labels
+all_pid_transcripts <- data.frame()
+# create data frame to store topic information for each participant
+all_pid_topics <- data.frame()
+
+for (i in participants) {
+  # find the transcript_id for this participant
+  this_transcript_id <- na.omit(unique(df$transcript_id[df$PID == i]))
+  # subset df to just this transcript id
+  this_transcript <- subset(df, transcript_id == this_transcript_id)
+  # subset this_transcript to only include NA and the current participant in PID
+  this_transcript <- subset(this_transcript, is.na(PID) | PID == i)
+  # fill in the PID for all rows
+  this_transcript$PID <- i
+  # fill in new_topic labels across rows
+  this_transcript <- this_transcript |> fill(new_topic, .direction = "down")
+  # replace NA in new_topic with "Starting the Call"
+  this_transcript$new_topic[is.na(this_transcript$new_topic)] <- "Starting The Call"
+  # create turn length variable (stop - start) in seconds
+  this_transcript$turn_length_s <- this_transcript$stop - this_transcript$start
+  # add a topic order number
+  this_transcript <- this_transcript |>
+    ungroup() |>
+    mutate(topic_order = as.integer(factor(new_topic, levels = unique(new_topic))))
+  # select only variables of interest
+  this_transcript <- this_transcript |> 
+    select(turn_id, scaled_turn_id, turn_length_s, transcript_id, PID, speaker, utterance, new_topic, topic_order)
+  # add to all_pid_transcripts
+  all_pid_transcripts <- rbind(all_pid_transcripts, this_transcript)
+  
+  # now that we have that, let's get the number of turns and topic length per participant
+  this_pid_summary <- this_transcript |>
+    ungroup() |>
+    group_by(PID, transcript_id, new_topic, topic_order) |>
+    summarize(number_of_turns = length(turn_length_s),
+              topic_length = sum(turn_length_s)) |>
+    ungroup() |>
+    arrange(topic_order)
+  # add to all_pid_topics
+  all_pid_topics <- rbind(all_pid_topics, this_pid_summary)
+}
+
+# export data frames
+write.csv(all_pid_topics, "./data/processed/all_participant_topic_labels.csv", row.names = FALSE)
+write.csv(all_pid_transcripts, "./data/processed/all_participant_transcripts.csv", row.names = FALSE)
+
+```
+
+```{r}
+# average topic length (s) per participant
+all_pid_topics |>
+  group_by(PID) |>
+  summarize(mean_topic_length_s = mean(topic_length)) |>
+  ggplot(aes(x = mean_topic_length_s)) +
+  geom_histogram() +
+  theme_minimal() 
+
+# average topic length (turns) per participant
+all_pid_topics |>
+  group_by(PID) |>
+  summarize(mean_topic_length_turns = mean(number_of_turns)) |>
+  ggplot(aes(x = mean_topic_length_turns)) +
+  geom_histogram() +
+  theme_minimal()
+```
+
+
+# 6. Likelihood of switching topics by topic length
+```{r}
+# 
+```
+

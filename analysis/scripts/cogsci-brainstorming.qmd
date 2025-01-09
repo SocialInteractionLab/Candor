@@ -1,0 +1,406 @@
+---
+title: "CogSci Brainstorming"
+format: 
+  html:
+    code-overflow: wrap
+    toc: true
+editor: source
+author: Helen Schmidt
+date-modified: today
+theme: flatly
+---
+
+# Setup
+```{r, setup, include = FALSE, message = FALSE}
+# set script working directory by checking for user (HS home or lab)
+if (Sys.info()[[7]] == "helenschmidt") {
+  knitr::opts_knit$set(root.dir = "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/")
+} else if (Sys.info()[[7]] == "tuo70125") {
+  knitr::opts_knit$set(root.dir = "/Users/tuo70125/My Drive/SANLab/Experiments/Conversation-Structure/")}
+
+# packages
+library(scales)
+library(Rmisc)
+library(tidyverse)
+```
+
+# Load data
+
+Nov. 2024 - Using dense samples 1 and 2 of annotated transcripts
+
+```{r}
+# load data
+df_raw <- read.csv("./data/processed/dense_subset1_and_subset2_processed.csv")
+
+# copy to editable data frame
+df <- df_raw
+
+# rename participant ID column
+names(df)[21] <- "PID"
+
+# print number of transcripts
+paste0("number of annotated transcripts = ", length(na.omit(unique(df$transcript_id))), sep = "")
+# print number of participants
+paste0("number of participants = ", length(na.omit(unique(df$PID))), sep = "")
+
+# re-scale turn ids so each transcript goes from is 0 - 1
+df <- df |>
+  group_by(transcript_id) |>
+  arrange(turn_id, .by_group = TRUE) |>
+  mutate(scaled_turn_id = rescale(turn_id))
+
+# save list of annotated transcript IDs
+annotated_IDs <- unique(df$transcript_id)
+
+# how many participants annotated each transcript?
+annotation_info <- df |>
+  group_by(transcript_id) |>
+  summarize(number_annotators = length(na.omit(unique(PID))))
+
+# fill topics, ensuring PID and topic labels don't overlap between transcripts
+df <- df |>
+  fill(new_topic, .direction = "down") |>
+  fill(PID, .direction = "down")
+
+# replace "new_topic" NAs at start with "Starting The Call"
+df$new_topic[is.na(df$new_topic)] <- "Starting The Call"
+
+# remove rows with starting the call
+df <- df |>
+  filter(new_topic != "Starting The Call")
+
+# preview
+head(df)
+```
+
+# Topic lengths
+
+Calculate the number of turns per topic for each annotator.
+
+```{r}
+# get number of turns per topic per annotator and get average topic length per annotator
+topic_lengths <- df |>
+  group_by(transcript_id) |>
+  arrange(turn_id, .by_group = TRUE) |> # ensure topics are in the right order
+  ungroup() |>
+  group_by(PID, new_topic) |>
+  summarize(number_of_turns = length(turn_id)) |>
+  mutate(average_turn_length = mean(number_of_turns))
+
+# average number of turns across all topics
+Rmisc::summarySE(topic_lengths, measurevar = "number_of_turns")
+
+# get average topic length across all annotators
+topic_lengths_summary <- topic_lengths |>
+  select(PID, average_turn_length) |>
+  ungroup() |>
+  distinct()
+
+# average number of turns across participant averages
+Rmisc::summarySE(topic_lengths_summary, measurevar = "average_turn_length")
+```
+
+```{r, fig.height=20, fig.width=10}
+# add topic number to topic_lengths
+topic_lengths <- topic_lengths |>
+  group_by(PID) |>
+  mutate(topic_number = 1:n())
+
+# plot average topic turn trajectory
+ggplot(data = topic_lengths, aes(x = topic_number, y = number_of_turns)) +
+  facet_wrap(.~PID, ncol = 10, scales = "free") +
+  geom_bar(stat = "identity")
+
+# save topic lengths
+write.csv(topic_lengths, "./data/processed/topic_labels_all.csv", row.names = FALSE)
+
+```
+
+```{r}
+# plot average per topic number
+topic_length_average <- topic_lengths |>
+  group_by(topic_number) |>
+  summarize(mean_length = mean(number_of_turns),
+            sd_length = sd(number_of_turns))
+
+ggplot(data = topic_length_average, aes(x = topic_number, y = mean_length)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean_length - sd_length, ymax = mean_length + sd_length)) +
+  theme_classic()
+```
+
+
+```{r}
+# get sbert embeddings of topic labels
+save_topics <- topic_lengths |>
+  select(PID, topic_number, new_topic)
+
+# get old/new topics
+# first row has no previous topic, current vs. prior rather than old vs. now
+# how does length of stretch of last topic predict distance jumped in topic space
+save_topics <- save_topics |>
+  group_by(PID) |>
+  mutate(current_topic = new_topic,
+         current_topic_number = topic_number,
+         prior_topic = lag(new_topic),
+         prior_topic_number = lag(topic_number))
+
+save_topics <- save_topics |>
+  na.omit()
+
+write.csv(save_topics, "./data/processed/topic_labels.csv", row.names = FALSE)
+
+```
+
+Length of utterances near end of topic (shorten/lengthen?)
+Also look at time rather than number of turns
+how long was starting the call # turns
+
+dimensionality reduction over topic labels
+2D reduced dimension set for topics, show some example conversations of where they go (do they start more similar and then go in more idiosyncratic directions)
+
+which partner tends to initiate more topics?
+
+examine topic shift drivers amongst the conversation partners
+
+dimensionality reduction (a la pca)
+
+send robert/ slack plot of previous topics no relationship but change in variability as previous turn length changes
+
+```{r}
+# load data
+topics <- read.csv('./data/output/topic_label_similarity.csv')
+topics$topic_similarity <- gsub("tensor\\(([^)]+)\\)", "\\1", topics$topic_similarity)
+topics$topic_similarity <- as.numeric(topics$topic_similarity)
+```
+
+```{r, fig.height=20, fig.width=10}
+# plot trajectory of similarity in topic labels per annotated conversation
+ggplot(topics, aes(x = topic_number, y = topic_similarity)) +
+  facet_wrap(.~PID, ncol = 10, scales = "free") +
+  geom_point(alpha = 0) +
+  geom_line()
+```
+
+```{r}
+# left join similarities w/ topic_lengths
+similarity <- left_join(topics, topic_lengths, by = c("PID", "topic_number", "new_topic"))
+
+similarity <- similarity |>
+  mutate(prior_number_of_turns = lag(number_of_turns),
+         subsequent_number_of_turns = lead(number_of_turns)) 
+
+similarity <- similarity |>
+  filter(prior_number_of_turns < 150, subsequent_number_of_turns < 150)
+
+ggplot(similarity, aes(x = log(prior_number_of_turns), y = log(topic_similarity))) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x) +
+  theme_classic()
+
+ggplot(similarity, aes(x = log(subsequent_number_of_turns), y = log(topic_similarity))) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x) +
+  theme_classic()
+```
+
+# Topic label clustering
+```{r}
+tsne_topics <- read.csv("./data/output/topic_tsne.csv")
+
+# filter out topics that go longer than 100 turns
+tsne_topics <- tsne_topics |>
+  filter(number_of_turns <= 100)
+```
+
+```{r, fig.height=20, fig.width=10}
+# plot trajectory of similarity in topic labels per annotated conversation
+ggplot(tsne_topics, aes(x = TSNE1, y = TSNE2, color = topic_number)) +
+  facet_wrap(.~PID, ncol = 10, scales = "free") +
+  geom_point(alpha = 0) +
+  geom_path() +
+  theme_classic()
+```
+
+```{r}
+# how do longs vs short topics cluster in 2D space?
+# upper third, middle third, lower third
+tsne_topics <- tsne_topics |>
+  mutate(turns_category = case_when(
+    ntile(number_of_turns, 3) == 1 ~ "bottom",
+    ntile(number_of_turns, 3) == 2 ~ "middle",
+    ntile(number_of_turns, 3) == 3 ~ "top"
+  ))
+
+top_topics <- tsne_topics |>
+  filter(turns_category == "top")
+middle_topics <- tsne_topics |>
+  filter(turns_category == "middle")
+bottom_topics <- tsne_topics |>
+  filter(turns_category == "bottom")
+
+# plot bottom third of number of turns in a topic
+ggplot(bottom_topics, aes(x = TSNE1, y = TSNE2, color = PID)) +
+  geom_point() +
+  theme_classic() +
+  labs(title = "bottom 3rd of topic lengths") +
+  theme(legend.position = "none")
+
+# plot middle third of number of turns in a topic
+ggplot(middle_topics, aes(x = TSNE1, y = TSNE2, color = PID)) +
+  geom_point() +
+  theme_classic() +
+  labs(title = "middle 3rd of topic lengths") +
+  theme(legend.position = "none")
+
+# plot top third of number of turns in a topic
+ggplot(top_topics, aes(x = TSNE1, y = TSNE2, color = PID)) +
+  geom_point() +
+  theme_classic() +
+  labs(title = "top 3rd of topic lengths") +
+  theme(legend.position = "none")
+
+# example annotation
+test <- tsne_topics |> filter(PID == "[False, '55b10b48fdf99b30f80e3993', None]")
+ggplot(test, aes(x = TSNE1, y = TSNE2)) +
+  geom_point(aes(color = topic_number)) +
+  geom_path(aes(color = topic_number)) +
+  theme_classic() +
+  labs(title = "example topic labels for one transcript") +
+  theme(legend.position = "bottom")
+  
+```
+
+```{r}
+ggplot(bottom_topics, aes(x = TSNE1, y = TSNE2, color = PID)) +
+  geom_point(alpha = 0) +
+  geom_path() +
+  theme_classic() +
+  theme(legend.position = "none")
+```
+
+# Clusters
+```{r}
+cluster <- read.csv("./data/output/manually_added_labels_clusters.csv")
+# get rid of python 
+cluster <- cluster[,-1]
+
+cluster$cluster_label[cluster$cluster_label == ""] <- NA
+
+cluster <- cluster |>
+  fill(cluster_label, .direction = "down") |>
+  distinct(new_topic, cluster_label)
+
+df <- df |>
+  mutate(new_topic = tolower(new_topic))
+
+# merge back with raw transcript data
+# go back and check why extra rows
+merged_df_cluster <- left_join(df, cluster, by = "new_topic")
+```
+
+```{r}
+# what cluster labels are most common
+merged_df_cluster |>
+  ungroup() |>
+  count(cluster_label) |>
+  arrange(desc(n))
+
+```
+
+```{r}
+# faceted bar plot of each cluster label showing count of transcripts are on that topic during a given conversation turn ID
+
+# create data frame showing count of transcripts where each cluster topic was discussed per turn ID number
+cluster_turns <- merged_df_cluster |>
+  ungroup() |>
+  group_by(transcript_id) |>
+  mutate(binned_turn_id = ntile(turn_id, 10)) |>
+  ungroup() |>
+  group_by(cluster_label, binned_turn_id) |>
+  summarize(transcript_count = n())
+
+ggplot(data = cluster_turns, aes(x = binned_turn_id, y = transcript_count, 
+                                 fill = cluster_label)) +
+  facet_wrap(.~cluster_label, ncol = 8, scales = "free_y") +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  theme(legend.position = "none")
+
+```
+
+## Transition matrix
+
+```{r}
+# create data frame with current/prior topics using cluster labels
+# group by participant and add topic numbers
+cluster_transitions <- merged_df_cluster |>
+  ungroup() |>
+  group_by(PID) |>
+  arrange(turn_id, .by_group = TRUE) |>
+  select(PID, cluster_label) |>
+  distinct() |>
+  group_by(PID) |>
+  mutate(current_topic_number = 1:n(),
+         current_topic = cluster_label,
+         prior_topic_number = lag(current_topic_number),
+         prior_topic = lag(cluster_label)) |>
+  na.omit()
+
+# count up instances of each transition
+transitions <- cluster_transitions |>
+  group_by(prior_topic, current_topic) |>
+  summarize(transition_count = n())
+```
+
+### Conditional on prior topic
+
+How likely are you to transition to current topic given prior topic?
+
+```{r}
+# get total sum of all transition counts
+transition_sum <- sum(transitions$transition_count)
+# create table of transition counts
+transition_table <- table(transitions$prior_topic, transitions$current_topic)
+# convert counts to probabilities
+transition_matrix <- prop.table(transition_table, margin = 1)
+# make matrix into a data frame
+transitions_df <- as.data.frame(as.table(transition_matrix))
+# rename variables
+colnames(transitions_df) <- c("prior_topic", "current_topic", "probability")
+
+# plot!
+ggplot(transitions_df, aes(x = prior_topic, y = current_topic,
+                           fill = probability)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Transition Matrix (conditional on prior topic)",
+       x = "Prior Topic", y = "Current Topic", fill = "Probability") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+
+```
+
+
+
+
+
+```{r}
+
+# transition matrix
+# first make old topic with cluster label
+# count up instances of each transition
+# divide by n of instances of last topic (i.e., likelihood transition to new topic given you're on old topic)
+# conditional probabilities >> geom_tile (viridis) (whole column will add to 1)
+# could also do marginal probabilities (overall probabilities, where whole matrix adds to 1)
+```
+
+
+what cluster labels are most common
+time series of cluster labels across conversations
+
+eventually repeat topic length shorter > longer analysis
+
+
+

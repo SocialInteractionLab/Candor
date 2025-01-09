@@ -1,0 +1,313 @@
+---
+title: "Modeling Topic Shifts"
+author: "Helen Schmidt"
+date-modified: today
+format: html
+toc: true
+self-contained: true
+---
+
+The goal of this script is to use transcripts + word embeddings + cosine similarity calculations to identify shifts in topic as operationalized by low points in semantic similarity from one conversation segment to the next. We can then compare these points to human annotations to examine if semantic similarity is a driver of topic shifts within the structure of a conversation between strangers. 
+
+# Setup
+```{r, setup, include = FALSE, message = FALSE}
+# set script working directory by checking for user (HS home or lab)
+if (Sys.info()[[7]] == "helenschmidt") {
+  knitr::opts_knit$set(root.dir = "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/")
+} else if (Sys.info()[[7]] == "tuo70125") {
+  knitr::opts_knit$set(root.dir = "/Users/tuo70125/My Drive/SANLab/Experiments/Conversation-Structure/")}
+
+# packages
+library(scales)
+library(Rmisc)
+library(tidyverse)
+```
+
+# Load Annotated Transcripts
+
+Nov. 2024 - Using dense samples 1 and 2
+
+```{r}
+# load data
+df <- read.csv("./data/processed/dense_subset1_and_subset2_processed.csv")
+
+# rename participant ID column
+names(df)[21] <- "PID"
+
+# print number of conversations
+df |> summarize(num_convos = length(unique(transcript_id))) 
+# print number of participants
+df |> summarize(num_PID = length(unique(PID)))
+
+# rescale turn ids so each convo is 0 - 1
+df <- df |>
+  group_by(transcript_id) |>
+  mutate(scaled_turn_id = rescale(turn_id))
+
+# save list of annotated transcript IDs
+annotated_IDs <- unique(df$transcript_id)
+
+# preview
+head(df)
+```
+
+```{r}
+# load raw transcripts (ONLY THOSE ANNOTATED)
+twd <- "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/transcripts/raw"
+
+# get all subfolder paths to backbiter transcripts
+# note: takes a while to run
+backbiter <- list.files(twd,
+                        full.names = TRUE,
+                        pattern = "transcript_backbiter.csv",
+                        recursive = TRUE)
+
+# bind backbiter data into one data frame and add transcript_id from folder name
+backbiter <- do.call(rbind, lapply(backbiter, function(x) { data = read.csv(x, header = TRUE)
+      convo = str_extract(x, "(?<=raw/)[^/]+")
+      data$transcript_id = convo
+      return(data)}))
+
+# select only some variables of interest
+backbiter <- backbiter |>
+  select(turn_id, speaker, transcript_id, utterance) |>
+  filter(transcript_id %in% annotated_IDs)
+```
+
+## Export data to Python
+
+This exported data will be loaded into the tiling Jupyter notebook and the tiling function will be applied. Then I can re-load the cosine similarity for a window of utterances of a size of my choosing.
+
+Since some transcripts were annotated by multiple annotators, I only want one of each unique transcript.
+
+```{r}
+# export for python
+write.csv(backbiter, "./data/processed/annotated_transcripts_for_tile.csv", row.names = FALSE)
+```
+
+**Apply tiling function in python tile script.**
+
+**FIX FUNCTION SUCH THAT TURN ID IS RIGHT AND NOT USING TRANSCRIPT ID AS TURN ID**
+
+# Load cosine similarity data
+
+Load output data from tiling python script. The number in the file name refers to the number of utterances included in each segment of the sliding window. 
+
+```{r}
+# load data
+df_tile <- read.csv("./data/output/annotated_transcripts_tile_3.csv")
+df_tile <- df_tile[,-1]
+# preview
+head(df_tile)
+```
+
+## Examine topic shifts (low semantic similarity)
+```{r, fig.height=20, fig.width=10}
+# per conversation, get percentile ranks of cosine similarity values
+df_tile <- df_tile |>
+  group_by(transcript_id) |>
+  mutate(similarity_percentile = percent_rank(cosine_similarity))
+
+# tag low percentiles (< 10%)
+df_tile$low_similarity <- NA
+df_tile$low_similarity[df_tile$similarity_percentile <= 0.1] <- "low"
+
+# subset low points only
+df_tile_low <- df_tile |>
+  filter(low_similarity == "low")
+
+# plot
+ggplot(data = df_tile, aes(x = A_start_turn, y = cosine_similarity)) +
+  facet_wrap(.~transcript_id, ncol = 10, scales = "free_x") +
+  geom_vline(data = df_tile_low, aes(xintercept = A_start_turn), color = 'lavender') +
+  geom_point(alpha = 0) +
+  geom_line(linewidth = 0.25) +
+  theme_classic() +
+  theme(strip.text = element_text(size = 4))
+```
+
+## Define window / annotation matching function
+```{r}
+# write a function to check if annotation turn ID is within a tiled window of utterances
+detect_window_annotations <- function(tiling_df, annotation_df) {
+  # save data frames for output
+  annotation_output <- data.frame()
+  # select one participant's annotations at a time
+  for (a in unique(annotation_df$PID)) {
+    # save PID
+    this_PID <- a
+    # subset annotation DF to just this participant's annotations
+    this_annotation <- annotation_df |> filter(PID == a)
+    # get corresponding transcript they annotated from tiling DF
+    this_transcript_id <- unique(this_annotation$transcript_id)
+    this_transcript <- tiling_df |> filter(transcript_id == this_transcript_id)
+    # add new variables to this_transcript to hold this participant's annotated turn / label
+    this_transcript$annotated_turn <- NA
+    this_transcript$annotated_label <- NA
+    # create a list of this participant's labeled topics and their turn IDs
+    PID_labels <- this_annotation$new_topic
+    PID_turns <- this_annotation$turn_id
+    # save a version of this_transcript for looping through annotations
+    annotations_result <- this_transcript
+    # 1a) does the gap turn (i.e., A_turn_end) == topic label turn selected?
+    annotations_result$annotated_turn <- ifelse(annotations_result$A_end_turn %in% PID_turns,
+                                                "yes", "no")
+    # 1b) if yes, add the label provided by participants
+    for (c in 1:length(PID_labels)) {
+      annotations_result$annotated_label[annotations_result$A_end_turn == PID_turns[c]] <- PID_labels[c]
+    }
+    # add to annotation output data frame
+    annotation_output <- rbind(annotation_output, annotations_result) 
+  }
+  return(annotation_output)
+}
+    
+  
+    
+#     # now loop through each label and add to tile data
+#     # 1) if gap turn (i.e., A_turn_end) == topic label turn selected
+#     # 2) if window contains the topic label turn selected
+#     for (b in 1:length(PID_labels)) {
+#       # create a hold data frame for each label and each window
+#       labels_result <- data.frame()
+#       window_result <- data.frame()
+#       # get corresponding turn selected for b index (i.e., b = 2, second turn selected)
+#       turn <- PID_turns[b]
+#       # 1) does annotation turn number = A_end_turn (i.e., window boundary)
+#       labels_result$
+#       
+#       # does annotation turn # = A_end_turn (i.e., window boundary)
+#         this_transcript$annotated_turn <- ifelse(this_transcript$A_end_turn == turn, "yes", "no")
+#         # if yes, add label
+#         this_transcript$annotated_label <- ifelse(this_transcript$annotated_turn == "yes", 
+#                                                   annotation_labels[t], NA)
+#     }
+#     
+#   }
+#   this_participant <-
+# }
+#   # set results data frame
+#   results <- data.frame()
+#   # loop through transcripts one at a time
+#   for (i in unique(annotation_df$transcript_id)) {
+#     # select current transcript
+#     this_transcript <- tiling_df |> filter(transcript_id == i)
+#     # add new variables to this_transcript data frame to hold annotated turn/label
+#     this_transcript$annotated_turn <- NA
+#     this_transcript$annotated_label <- NA
+#     # select current annotations
+#     this_annotation <- annotation_df |> filter(transcript_id == i)
+#     # create a blank data frame for participant-level data
+#     participant_results <- data.frame()
+#     # loop through each participant that annotated this conversation
+#     for (p in unique(this_annotation$PID)) {
+#       # select one participant at a time
+#       PID_annotation <- this_annotation |> filter(PID == p)
+#       # get list of annotation turn locations...
+#       annotation_turns <- PID_annotation$turn_id
+#       # ... and topic labels
+#       annotation_labels <- PID_annotation$new_topic
+#       # loop through turns and check if it's in a window in tiling data frame
+#       for (t in 1:length(annotation_turns)) {
+#         # current turn ID
+#         turn <- annotation_turns[t]
+#         # does annotation turn # = A_end_turn (i.e., window boundary)
+#         this_transcript$annotated_turn <- ifelse(this_transcript$A_end_turn == turn, "yes", "no")
+#         # if yes, add label
+#         this_transcript$annotated_label <- ifelse(this_transcript$annotated_turn == "yes", 
+#                                                   annotation_labels[t], NA)
+#         # add participant ID
+#         this_transcript$PID <- p
+#         # save to output data frame
+#         participant_results <- rbind(participant_results, this_transcript)
+#       }
+#     }
+#     # save participant results to main results data frame
+#     results <- rbind(results, participant_results)
+#     # save distinct rows
+#     results <- results |> distinct()
+#   }
+#   return(results)
+
+```
+
+## Get annotations from human raters
+```{r}
+annotations <- df |>
+  select(turn_id, speaker, transcript_id, utterance, previous_topic, new_topic, PID) |>
+  filter(!is.na(PID))
+```
+
+
+## Add annotations to tiling data
+```{r}
+# apply function
+tile_annotation_df <- detect_window_annotations(df_tile, annotations)
+```
+
+```{r}
+# calculate distance from the human annotation within the tile data
+tile_annotation_df <- tile_annotation_df |>
+  group_by(transcript_id) |>
+  arrange(A_end_turn, .by_group = TRUE) |>
+  mutate(annotation_dist = case_when(annotated_turn == "yes" ~ 0,
+                                     lag(annotated_turn, 1) == "yes" ~ 1,
+                                     lag(annotated_turn, 2) == "yes" ~ 2,
+                                     lead(annotated_turn, 1) == "yes" ~ -1,
+                                     lead(annotated_turn, 2) == "yes" ~ -2,
+                                     .default = 3))
+
+```
+
+## Mean semantic similarity by annotation distance
+```{r}
+# get summary for annotation distance
+dist_summary <- summarySE(tile_annotation_df, measurevar = "cosine_similarity", groupvars = "annotation_dist")
+
+# plot
+ggplot(data = dist_summary, aes(x = annotation_dist, y = cosine_similarity)) +
+  geom_point(alpha = 0) +
+  geom_line(color = "#D8B4A0", linewidth = 2) +
+  geom_ribbon(aes(ymin = cosine_similarity - se, ymax = cosine_similarity + se), 
+              alpha = 0.25, fill = "#D8B4A0") +
+  theme_minimal()
+
+```
+
+## Average cosine similarity at human annotations vs. other
+```{r}
+# yes vs no annotation cosine similarity average
+tile_annotation_df |>
+  ungroup() |>
+  group_by(annotated_turn) |>
+  summarize(mean_cosine = mean(cosine_similarity))
+
+# average cosine similarity for utterances that contain annotated
+tile_annotation_df |>
+  ungroup() |>
+  mutate(window_contains_annotation = ifelse(annotation_dist == 3, "no", "yes")) |>
+  group_by(window_contains_annotation) |>
+  summarize(mean_cosine = mean(cosine_similarity))
+
+# average annotation distance from low cosine similarity values
+tile_annotation_df |>
+  ungroup() |>
+  filter(low_similarity == "low") |>
+  summarize(mean_distance = mean(annotation_dist))
+
+```
+
+
+
+
+
+
+Identify where human annotations fall in the sliding windows
+calculate the number of low similarity values correspond to a human topic shift
+calculate average % overlap of low similarity with human topic shifts across all annotated transcripts
+
+
+Windows with annotated change vs. windows not annotated change
+mean cosine similarity of those in the middle vs any other turn
+
+

@@ -1,0 +1,266 @@
+---
+title: "CANDOR - TSNE"
+author: "Helen Schmidt"
+date-modified: today
+format: html
+toc: true
+self-contained: true
+---
+
+```{r}
+library(scales)
+library(tidyverse)
+```
+
+```{r}
+# load candor conversations
+df <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/dense_subset1_and_subset2_processed.csv")
+
+# preview
+head(df)
+
+# rename participant ID column
+names(df)[21] <- "PID"
+
+# print number of conversations
+df |> summarize(num_convos = length(unique(transcript_id))) 
+# print number of participants
+df |> summarize(num_PID = length(unique(PID)))
+
+# rescale turn ids so each convo is 0 - 1
+# make sure df is arranged by turn ID
+df <- df |>
+  group_by(transcript_id) |>
+  arrange(turn_id) |>
+  mutate(scaled_turn_id = rescale(turn_id))
+```
+
+```{r}
+# format data to export for TSNE
+df_tsne <- df |>
+  select(transcript_id, speaker, utterance, PID, scaled_turn_id)
+
+# export one conversation to make TSNE illustration
+# lots of pandemic talk
+tsne_test <- subset(df, transcript_id == "5ca82a7c-ef99-444e-9147-c957ad9632ba")
+# save
+write.csv(tsne_test, "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/test_tsne.csv", row.names = FALSE)
+
+# export another with not much qualitative coherence
+tsne_test_2 <- subset(df, transcript_id == "cb056010-c50e-4e80-b639-bb178a2b9330")
+# save
+write.csv(tsne_test_2, "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/test_tsne_2.csv", row.names = FALSE)
+
+```
+
+```{r}
+# plot example conversation
+library(gganimate)
+# create example animated plot for tsne
+tsne <- read.csv('/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/test_tsne_embeddings.csv')
+# remove first column from python
+tsne <- tsne[,-1]
+# add speaker turn order
+tsne <- tsne |>
+  group_by(speaker) |>
+  mutate(speaker_turn_order = seq_along(turn_id))
+
+# plot
+plot <- ggplot(data = tsne, aes(x = TSNE1, y = TSNE2,
+                        color = speaker, fill = speaker)) +
+  geom_point(size = 5) +
+  geom_path() +
+  theme_minimal() +
+  transition_reveal(speaker_turn_order) +
+  shadow_wake(wake_length = 0.1) +
+  theme(legend.position = "none")
+
+animate(plot, duration = 20, fps = 20, renderer = gifski_renderer(), end_pause = 20,
+        height = 400, width = 400)
+anim_save('/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/output/tsne-example.gif')
+```
+
+```{r}
+# create example animated plot for tsne
+tsne <- read.csv('/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/test_tsne_2_embeddings.csv')
+# remove first column from python
+tsne <- tsne[,-1]
+# add speaker turn order
+tsne <- tsne |>
+  group_by(speaker) |>
+  mutate(speaker_turn_order = seq_along(turn_id))
+
+# plot
+plot <- ggplot(data = tsne, aes(x = TSNE1, y = TSNE2,
+                        color = speaker, fill = speaker)) +
+  geom_point(size = 5) +
+  geom_path() +
+  theme_minimal() +
+  transition_reveal(speaker_turn_order) +
+  shadow_wake(wake_length = 0.1) +
+  theme(legend.position = "none")
+
+plot
+
+animate(plot, duration = 20, fps = 20, renderer = gifski_renderer(), end_pause = 20,
+        height = 400, width = 400)
+anim_save('/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/output/tsne-2-example.gif')
+```
+
+## Tile
+```{r, fig.height=3, fig.width=6}
+tile <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/lagged_similarity.csv")
+# remove first column from python
+tile <- tile[,-1]
+# pivot longer to format lagged similarity
+tile <- tile |>
+  select(turn_id, transcript_id, scaled_turn_id, similarity_lag1,
+         similarity_lag2, similarity_lag5, similarity_lag10) |>
+  pivot_longer(cols = similarity_lag1:similarity_lag10,
+               names_to = "lag_length",
+               values_to = "cosine_similarity")
+
+# get human annotation locations for this example conversation
+tile_convo <- df |>
+  filter(transcript_id == "cb056010-c50e-4e80-b639-bb178a2b9330")
+annotation_locations <- tile_convo |>
+  ungroup() |>
+  select(new_topic, turn_id) |>
+  filter(!is.na(new_topic))
+
+# how similar is a given utterance (n) to the previous (x) utterances?
+
+# x = 1
+tile |>
+  select(turn_id, lag_length, cosine_similarity) |>
+  filter(lag_length == "similarity_lag1" & !is.na(cosine_similarity)) |>
+  ggplot(aes(x = turn_id, y = cosine_similarity)) +
+  # add annotation locations
+  geom_vline(data = annotation_locations, aes(xintercept = turn_id), color = "grey") +
+  geom_point(alpha = 0, color = "#A6B1E1", fill = "#A6B1E1") +
+  #geom_line(color = "#A6B1E1") +
+  geom_smooth(color = "#A6B1E1") +
+  theme_minimal()
+
+# x = 2
+tile |>
+  select(turn_id, lag_length, cosine_similarity) |>
+  filter(lag_length == "similarity_lag2" & !is.na(cosine_similarity)) |>
+  ggplot(aes(x = turn_id, y = cosine_similarity)) +
+  # add annotation locations
+  geom_vline(data = annotation_locations, aes(xintercept = turn_id), color = "grey") +
+  geom_point(alpha = 0, color = "#B4869F", fill = "#B4869F") +
+  geom_line(color = "#B4869F") +
+  theme_minimal()
+
+# x = 5
+tile |>
+  select(turn_id, lag_length, cosine_similarity) |>
+  filter(lag_length == "similarity_lag5" & !is.na(cosine_similarity)) |>
+  ggplot(aes(x = turn_id, y = cosine_similarity)) +
+  # add annotation locations
+  geom_vline(data = annotation_locations, aes(xintercept = turn_id), color = "grey") +
+  geom_point(alpha = 0, color = "#985F6F", fill = "#985F6F") +
+  geom_line(color = "#985F6F") +
+  theme_minimal()
+
+# x = 10
+tile |>
+  select(turn_id, lag_length, cosine_similarity) |>
+  filter(lag_length == "similarity_lag10" & !is.na(cosine_similarity)) |>
+  ggplot(aes(x = turn_id, y = cosine_similarity)) +
+  # add annotation locations
+  geom_vline(data = annotation_locations, aes(xintercept = turn_id), color = "grey") +
+  geom_point(alpha = 0, color = "#4E4C67", fill = "#4E4C67") +
+  geom_line(color = "#4E4C67") +
+  theme_minimal()
+
+```
+
+```{r}
+# average similarity at each marked topic change
+lag1 <- tile |>
+  filter(lag_length == "similarity_lag1" & !is.na(cosine_similarity)) |>
+  select(turn_id, cosine_similarity)
+lag1 <- merge(lag1, annotation_locations, by = "turn_id")
+
+print(paste0("Mean similarity between utterances at annotated topic shift (lag = 1) is ", 
+             round(mean(lag1$cosine_similarity), digits = 4), sep = ""))
+
+lag2 <- tile |>
+  filter(lag_length == "similarity_lag2" & !is.na(cosine_similarity)) |>
+  select(turn_id, cosine_similarity)
+lag2 <- merge(lag2, annotation_locations, by = "turn_id")
+
+print(paste0("Mean similarity between utterances at annotated topic shift (lag = 2) is ", 
+             round(mean(lag2$cosine_similarity), digits = 4), sep = ""))
+
+lag5 <- tile |>
+  filter(lag_length == "similarity_lag5" & !is.na(cosine_similarity)) |>
+  select(turn_id, cosine_similarity)
+lag5 <- merge(lag5, annotation_locations, by = "turn_id")
+
+print(paste0("Mean similarity between utterances at annotated topic shift (lag = 5) is ", 
+             round(mean(lag5$cosine_similarity), digits = 4), sep = ""))
+
+lag10 <- tile |>
+  filter(lag_length == "similarity_lag10" & !is.na(cosine_similarity)) |>
+  select(turn_id, cosine_similarity)
+lag10 <- merge(lag10, annotation_locations, by = "turn_id")
+
+print(paste0("Mean similarity between utterances at annotated topic shift (lag = 10) is ", 
+             round(mean(lag10$cosine_similarity), digits = 4), sep = ""))
+
+```
+
+
+
+```{r}
+# df <- read.csv("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/analysis/data/test_convo_embeddings.csv")
+# df <- df[,-1]
+# 
+# library(lsa)
+# library(philentropy)
+# 
+# candor_clean <- df |>
+#   mutate(embeddings = str_remove_all(embeddings, "\\[ "),
+#          embeddings = str_remove_all(embeddings, "[\\[\\]]"),
+#          embeddings = str_replace_all(embeddings, "  ", " "),
+#          embeddings = as.list(strsplit(embeddings, " ")),
+#          embeddings = lapply(embeddings, as.numeric))
+# 
+# candor_distances <- candor_clean |>
+#   group_by(transcript_id) |>
+#   arrange(turn_id, .by_group = TRUE) |>
+#   mutate(current_embedding = embeddings,
+#          last_1_embedding = lag(embeddings, n = 1),
+#          last_2_embedding = lag(embeddings, n = 2),
+#          last_3_embedding = lag(embeddings, n = 3))
+# 
+# # replace NULL with NA
+# distance_1 <- candor_distances |>
+#   select(turn_id, transcript_id, current_embedding, last_1_embedding) |>
+#   slice(-1) |>
+#   mutate(cosine_distance_1 = philentropy::cosine_dist(current_embedding,
+#                                                       last_1_embedding, 
+#                                                       testNA = FALSE))
+# 
+# # calculate cosine distance between current_embedding and lagged embeddings
+# candor_distances <- candor_distances |>
+#   mutate(distance_1 = philentropy::cosine_dist(current_embedding, last_1_embedding, testNA = FALSE))
+# candor_distances$distance_1 <- philentropy::cosine_dist()
+# 
+# candor_distances <- candor_clean |>
+#   mutate(distance_1 = philentropy::cosine_dist(as.numeric(unlist(embeddings)),
+#                                                as.numeric(unlist(lag(embeddings))), 
+#                                                testNA = FALSE))
+
+#cosine_dist(as.numeric(unlist(candor_clean$embeddings[1])), as.numeric(unlist(candor_clean$embeddings[2])), testNA = TRUE)
+# return NA instead of erroring out
+# use function that more gracefully deals with this, may be looking for lag in the first list
+
+
+```
+
+
+

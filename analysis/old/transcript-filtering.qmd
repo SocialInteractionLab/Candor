@@ -1,0 +1,30 @@
+---
+title: "Transcript Filtering"
+author: "Helen Schmidt"
+date-modified: today
+format: html
+toc: true
+self-contained: true
+---
+
+The goal of this script is to house all code for extracting transcript / annotation subsets from the overall total of data (whether that's the entire CANDOR dataset or our annotated sample).
+
+# Setup
+```{r, setup, include = FALSE, message = FALSE}
+# set script working directory by checking for user (HS home or lab)
+if (Sys.info()[[7]] == "helenschmidt") {
+  knitr::opts_knit$set(root.dir = "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/")
+} else if (Sys.info()[[7]] == "tuo70125") {
+  knitr::opts_knit$set(root.dir = "/Users/tuo70125/My Drive/SANLab/Experiments/Conversation-Structure/")}
+```
+
+```{r, include = FALSE, message = FALSE}
+# packages
+library(tidyverse)
+```
+
+# Annotated Transcripts for Tile
+```{r}
+df <- read.csv("./data/processed/dense_subset1_and_subset2_processed.csv")
+```
+

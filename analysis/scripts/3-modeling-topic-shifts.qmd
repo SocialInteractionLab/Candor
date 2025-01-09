@@ -1,0 +1,318 @@
+---
+title: "(3) Modeling Topic Shifts"
+author: "Helen Schmidt"
+date-modified: today
+format: html
+toc: true
+self-contained: true
+---
+
+# Setup
+```{r, setup, include = FALSE, message = FALSE}
+# set script working directory by checking for user (HS home or lab)
+if (Sys.info()[[7]] == "helenschmidt") {
+  knitr::opts_knit$set(root.dir = "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/")
+} else if (Sys.info()[[7]] == "tuo70125") {
+  knitr::opts_knit$set(root.dir = "/Users/tuo70125/My Drive/SANLab/Experiments/Conversation-Structure/")}
+```
+
+```{r, include = FALSE, message = FALSE}
+# packages
+library(scales)
+library(cowplot)
+library(Rmisc)
+library(ggalt)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(tidyverse)
+```
+
+# 1. Tile Cosine Similarity
+
+Cosine similarity of conversation utterances aggregated over 3 turns sliding forward in the conversation by 1 turn. Data frame created using `2-tile.ipynb` script. 
+
+```{r}
+# load tile data
+df_tile <- read.csv("./data/output/annotated_transcripts_tile_3.csv")
+# preview
+head(df_tile)
+```
+
+## Define annotation matching function
+
+Examine annotation points for all participants and determine if a given tiled window contains the utterance they marked as signifying a topic shift in conversation. If the utterance they selected is within the window, mark it with "yes" and if not, mark it with a "no". Do this for all participants separately.
+
+```{r}
+# write a function to check if annotation turn ID is within a tiled window of utterances
+detect_window_annotations <- function(tiling_df, annotation_df) {
+  # save data frames for output
+  annotation_output <- data.frame()
+  # select one participant's annotations at a time
+  for (a in unique(annotation_df$PID)) {
+    # save PID
+    this_PID <- a
+    # subset annotation DF to just this participant's annotations
+    this_annotation <- annotation_df |> filter(PID == a)
+    # get corresponding transcript they annotated from tiling DF
+    this_transcript_id <- unique(this_annotation$transcript_id)
+    this_transcript <- tiling_df |> filter(transcript_id == this_transcript_id)
+    # add new variables to this_transcript to hold this participant's annotated turn / label
+    this_transcript$annotated_turn <- NA
+    this_transcript$annotated_label <- NA
+    # create a list of this participant's labeled topics and their turn IDs
+    PID_labels <- this_annotation$new_topic
+    PID_turns <- this_annotation$turn_id
+    # save a version of this_transcript for looping through annotations
+    annotations_result <- this_transcript
+    # add participant ID
+    annotations_result$PID <- this_PID
+    # 1a) does the gap turn (i.e., A_turn_end) == topic label turn selected?
+    annotations_result$annotated_turn <- ifelse(annotations_result$A_end_turn %in% PID_turns,
+                                                "yes", "no")
+    # 1b) if yes, add the label provided by participants
+    for (c in 1:length(PID_labels)) {
+      annotations_result$annotated_label[annotations_result$A_end_turn == PID_turns[c]] <- PID_labels[c]
+    }
+    # add to annotation output data frame
+    annotation_output <- rbind(annotation_output, annotations_result) 
+  }
+  return(annotation_output)
+}
+```
+
+## Load annotation data & apply function
+```{r}
+# load annotation data 
+df_ann <- read.csv("./data/processed/dense_subset_processed.csv") |>
+  filter(!is.na(PID))
+
+# apply function
+tile_ann <- detect_window_annotations(df_tile, df_ann)
+```
+
+## calculate annotation distance
+```{r}
+# calculate distance from the human annotation within the tile data
+ann_dist <- tile_ann |>
+  dplyr::group_by(transcript_id) |>
+  #arrange(A_end_turn, .by_group = TRUE) |>
+  mutate(annotation_dist = case_when(annotated_turn == "yes" ~ 0,
+                                     lag(annotated_turn, 1) == "yes" ~ 1,
+                                     lag(annotated_turn, 2) == "yes" ~ 2,
+                                     lead(annotated_turn, 1) == "yes" ~ -1,
+                                     lead(annotated_turn, 2) == "yes" ~ -2,
+                                     .default = NA))
+
+# create data frame that only contains cosine similarity, annotation distance, and participant ID to ensure no duplicates when calculating cosine similarity by annotation distance averages
+PID_distance <- ann_dist |> 
+  select(transcript_id, annotation_dist, cosine_similarity, PID) |>
+  na.omit() ##|>
+  #mutate(annotation_dist = as.factor(annotation_dist))
+
+# fit model
+dist_m1 <- lmer(cosine_similarity ~ as.factor(annotation_dist) + (1|PID), data = PID_distance)
+summary(dist_m1)
+# pairwise comparisons
+em_m1 <- emmeans(dist_m1, specs = pairwise ~ annotation_dist)
+em_m1$contrasts
+
+```
+
+## plot
+```{r}
+# get summary for annotation distance
+dist_summary <- summarySE(PID_distance, measurevar = "cosine_similarity", groupvars = "annotation_dist")
+
+# plot
+ggplot(data = dist_summary, aes(x = annotation_dist, y = cosine_similarity)) +
+  geom_point(alpha = 0) +
+  geom_line(color = "#D8B4A0", linewidth = 2) +
+  geom_ribbon(aes(ymin = cosine_similarity - se, ymax = cosine_similarity + se), 
+              alpha = 0.25, fill = "#D8B4A0") +
+  labs(x = "Turn Distance from Annotation", y = "Cosine Similarity") +
+  theme_cowplot()
+
+```
+
+***
+
+# 2. TSNE
+
+Do cluster labels appropriately cluster topic labels provided by participants?
+
+```{r}
+# load tsne values for HS-provided cluster labels and participant-provided topic labels
+tsne <- read.csv("./data/output/tsne_25.csv")
+
+# subset to just participant and clustered types
+tsne_cluster <- tsne |> filter(type == "cluster")
+tsne_participant <- tsne |> filter(type == "participant")
+```
+
+```{r}
+# compute the smallest polygon to enclose cluster points
+# get convex hulls for each cluster
+hulls <- tsne_participant |>
+  group_by(clusters) |>
+  do({
+    chull_points <- .[chull(.$tsne_1, .$tsne_2), ]
+    data.frame(x = chull_points$tsne_1, y = chull_points$tsne_2)
+  }) |>
+  ungroup()
+```
+
+
+```{r}
+# plot cluster labels
+ggplot() +
+  #geom_polygon(data = hulls, aes(x = x, y = y, group = clusters, fill = as.factor(clusters)), alpha = 0.1) +
+  geom_text(data = tsne_cluster, aes(x = tsne_1, y = tsne_2, color = as.factor(clusters), label = topic)) +
+  geom_point(data = tsne_cluster, aes(x = tsne_1, y = tsne_2, color = as.factor(clusters)), size = 3) +
+  geom_point(data = tsne_participant, aes(x = tsne_1, y = tsne_2, color = as.factor(clusters)), alpha = 0.01) +
+  theme_cowplot() +
+  theme(legend.position = "none")
+```
+
+
+
+***
+
+**return to make figure showing conversation dynamics for some exemplary transcripts**
+
+```{r}
+# load tile data
+df_tsne <- read.csv("./data/output/annotated_transcripts_tsne.csv")
+# preview
+head(df_tsne)
+
+# subset to one example conversation
+tsne_subset <- df_tsne |> filter(transcript_id == "01849238-f5f0-487e-bca4-7b4fe0c9625c")
+```
+
+```{r}
+# plot
+ggplot(data = tsne_subset, aes(x = tsne_1, y = tsne_2, color = speaker)) +
+  geom_point() +
+  geom_path() +
+  theme_cowplot() +
+  theme(legend.position = "none")
+```
+
+***
+
+# 3. Topic lengths & transitions
+
+```{r}
+# load participant-level transcripts and match to category clusters to see...
+# 1) how long people tend to spend on certain topics
+# 2) do people tend to move from one topic to another
+
+# load data
+all_pid_transcripts <- read.csv("./data/processed/all_participant_transcripts.csv")
+# make all topics lowercase
+all_pid_transcripts$new_topic <- tolower(all_pid_transcripts$new_topic)
+
+# load 25 cluster data
+cluster_25 <- read.csv("./data/output/topic_clusters_25.csv")
+
+# merge by PID, transcript_id, new_topic, and topic_order
+transcripts_clusters <- merge(all_pid_transcripts, cluster_25, 
+                              by = c("PID", "transcript_id", 
+                                     "new_topic", "topic_order"))
+
+#test <- anti_join(all_pid_transcripts, transcripts_clusters)
+
+# finally, add cluster labels based on clusters
+cluster_labels <- read.csv("./data/output/topic_cluster_labels_25.csv")
+transcripts_clusters <- merge(transcripts_clusters, cluster_labels,
+                              by = "clusters")
+```
+
+Example participant, example transcript.
+
+```{r}
+example <- transcripts_clusters |> 
+  filter(PID == "[False, '674eae0026291e33be89b46f', None]") |>
+  arrange(topic_order)
+
+# plot (separate)
+ggplot(data = example, aes(x = scaled_turn_id, y = cluster_label,
+                           color = cluster_label)) +
+  geom_tile() +
+  theme_cowplot() +
+  labs(x = "conversation completion (%)", y = "topic category") +
+  theme(legend.position = "none")
+```
+
+Same example transcript, but all participants who annotated this transcript.
+
+```{r}
+example2 <- transcripts_clusters |>
+  filter(transcript_id == "5c91528b-686c-4446-82dc-5dd830d4d7b1") |>
+  arrange(PID,topic_order)
+
+# plot (separate)
+ggplot(data = example2, aes(x = scaled_turn_id, y = cluster_label,
+                           color = cluster_label)) +
+  facet_wrap(.~PID) +
+  geom_tile() +
+  theme_cowplot() +
+  labs(x = "conversation completion (%)", y = "topic category") +
+  theme(legend.position = "none")
+```
+
+## Topic transition matrix
+
+```{r}
+# create data frame with current/prior topics using cluster labels
+# group by participant and add topic numbers
+cluster_transitions <- transcripts_clusters |>
+  ungroup() |>
+  group_by(PID) |>
+  arrange(scaled_turn_id, .by_group = TRUE) |>
+  select(PID, cluster_label) |>
+  distinct() |>
+  group_by(PID) |>
+  mutate(current_topic_number = 1:n(),
+         current_topic = cluster_label,
+         prior_topic_number = lag(current_topic_number),
+         prior_topic = lag(cluster_label)) |>
+  na.omit()
+
+# count up instances of each transition
+transitions <- cluster_transitions |>
+  group_by(prior_topic, current_topic) |>
+  summarize(transition_count = n())
+```
+
+```{r}
+# check distribution of transition counts
+ggplot(transitions, aes(x = transition_count)) +
+  geom_histogram()
+```
+
+
+### Conditional on prior topic
+
+How likely are you to transition to current topic given prior topic?
+
+```{r}
+# calculate transition probability (out of total sum per prior category)
+transition_matrix <- transitions |>
+  group_by(prior_topic) |>
+  mutate(prior_sum = sum(transition_count)) |>
+  mutate(probability = transition_count/prior_sum)
+
+# plot!
+ggplot(transition_matrix, aes(x = prior_topic, y = current_topic,
+                           fill = probability)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Transition Matrix (conditional on prior topic)",
+       x = "Prior Topic", y = "Current Topic", fill = "Probability") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+
+```
