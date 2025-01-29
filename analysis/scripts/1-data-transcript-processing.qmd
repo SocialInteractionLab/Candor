@@ -32,76 +32,38 @@ library(tidyverse)
 
 # 1. Merge Raw Data
 ```{r}
-# get all subfolder paths to raw data files
+# get all subfolder paths to raw participant data files
 raw <- list.files("./data/raw/final",
                   full.names = TRUE,
                   pattern = "*.csv",
                   recursive = FALSE)
 # bind data into one data frame
 raw <- do.call(rbind, lapply(raw, function(x) { data = read.csv(x, header = TRUE)
-                                                return(data) }))
+                                                return(data) })) #44227
 ```
 
-# 2. Merge Raw Data w/ Transcripts
+# 2. Participant exclusions
+
 ```{r}
-# get a list of annotated transcripts
-annotated_transcripts <- unique(raw$transcript_id)
-
-# get all subfolder paths to backbiter CANDOR transcripts
-# note: takes a while to run
-backbiter <- list.files(candor,
-                        full.names = TRUE,
-                        pattern = "transcript_backbiter.csv",
-                        recursive = TRUE)
-
-# bind backbiter data into one data frame and add transcript_id from folder name
-backbiter <- do.call(rbind, lapply(backbiter, function(x) { data = read.csv(x, header = TRUE)
-                                                       convo = str_extract(x, "(?<=raw/)[^/]+")
-                                                       data$transcript_id = convo
-                                                       return(data)}))
-
-# select only backbiter transcripts that have associated annotations
-backbiter_subset <- subset(backbiter, transcript_id %in% annotated_transcripts)
-
-# merge backbiter transcript data with annotation data
-raw_final <- merge(backbiter_subset, raw, 
-               by = c("transcript_id", "turn_id", "speaker"), 
-               all = TRUE, sort = TRUE)
-
-# select only some variables of interest from backbiter_subset for transcript tiling
-backbiter_subset <- backbiter_subset |>
-  select(turn_id, speaker, transcript_id, utterance)
-
 # rename participant ID variable to PID
-names(raw_final)[21] <- "PID"
+names(raw)[6] <- "PID"
 
-# export raw merged data
-write.csv(raw_final, "./data/raw/full_dense_subset_raw.csv", row.names = FALSE)
+# count number of annotated transcripts
+length(unique(raw$transcript_id)) #201
 
-# save raw_final as df
-df <- raw_final
-
-# print raw number of participants (minus Isaiah test, hence minus 1)
-paste0("Raw number of participants before exclusions = ", length(na.omit(unique(df$PID))) - 1, sep = "")
-
-# remove unnecessary data frames
-rm(backbiter, raw, annotated_transcripts, candor, raw_final)
-```
-
-# 3. Participant exclusions
-
-```{r}
-# how many annotations per participant?
-df |>
+# display number of annotations per participant
+raw |>
   ungroup() |>
   group_by(PID) |>
   summarize(num_annotations = length(unique(new_topic))) |>
   ggplot(aes(x = num_annotations)) +
   geom_histogram(binwidth = 1) +
   theme_minimal()
+```
 
+```{r}
 # get quartiles and median annotation value
-df |>
+raw |>
   ungroup() |>
   group_by(PID) |>
   summarize(num_annotations = length(unique(new_topic))) |>
@@ -114,23 +76,23 @@ df |>
             Q_95 = quantile(num_annotations, 0.95))
 
 # exclude participants who made 6 or fewer or 40 or greater annotations
-exclude_by_ann_number <- df |>
+exclude_by_ann_number <- raw |>
   ungroup() |>
   group_by(PID) |>
   summarize(num_annotations = length(unique(new_topic))) |>
   filter(num_annotations <= 6 | num_annotations >= 40)
+
 # make list of participant IDs to exclude
-exclude_by_ann_number <- exclude_by_ann_number$PID
-# remove NA from this list
-exclude_by_ann_number <- na.omit(exclude_by_ann_number)
+exclude_by_ann_number <- na.omit(exclude_by_ann_number$PID) #346
+
+# show
+exclude_by_ann_number
 
 # print (not including Isaiah test, hence - 1)
 paste0("Number of participants excluded due to below/over annotation number thresholds = ", length(exclude_by_ann_number)-1, sep = "")
-
 ```
 
 ```{r}
-# exclude participants for reasons other than annotation numbers
 
 ## | --------------- ID number --------------- | --------------- reason for exclusion --------------- |
 ## | [False, 'Isaiah_test', None]              | test ID (included in annotation number exclusion)    |
@@ -138,24 +100,61 @@ paste0("Number of participants excluded due to below/over annotation number thre
 ## | ------------------------------------------------------------------------------------------------ |
 
 # exclusion count
-# 307
-
-# actually exclude participants 
-df_excluded_participants <- df |>
-  filter(!(PID %in% exclude_by_ann_number))
-
-# print
-paste0("Final number of included participants = ", length(na.omit(unique(df_excluded_participants$PID))), sep = "")
-
-# re-save excluded participant data frame as df
-df <- df_excluded_participants
+# 345
 ```
 
 ```{r}
-# export backbiter subset for tiling
-write.csv(backbiter_subset, "./data/processed/backbiter_subset_for_tiling.csv", row.names = FALSE)
-# remove
-rm(backbiter_subset, df_excluded_participants, exclude_by_ann_number)
+# exclude participants from raw data
+raw_excluded <- raw |>
+  filter(!(PID %in% exclude_by_ann_number))
+
+# print
+paste0("Final number of included participants = ", length(na.omit(unique(raw_excluded$PID))), sep = "")
+```
+
+# 3. Merge Raw Data w/ Transcripts
+
+```{r}
+# get a list of annotated transcripts (minus excluded participants)
+annotated_transcripts <- unique(raw_excluded$transcript_id) #200
+```
+
+```{r}
+# get all subfolder paths to backbiter CANDOR transcripts
+backbiter <- list.files(candor,
+                        full.names = TRUE,
+                        pattern = "transcript_backbiter.csv",
+                        recursive = TRUE) #1656
+
+# bind backbiter data into one data frame and add transcript_id from folder name
+backbiter <- do.call(rbind, lapply(backbiter, function(x) { data = read.csv(x, header = TRUE)
+                                                       convo = str_extract(x, "(?<=raw/)[^/]+")
+                                                       data$transcript_id = convo
+                                                       return(data)}))
+
+# select only backbiter transcripts that have associated annotations
+backbiter_subset <- subset(backbiter, transcript_id %in% annotated_transcripts) #71615
+```
+
+
+```{r}
+# merge backbiter transcript data with annotation data (excluded participants already removed)
+raw_final <- merge(backbiter_subset, raw_excluded,
+                   by = c('transcript_id', 'turn_id'),
+                   all = TRUE, sort = TRUE)
+
+# select only some variables of interest from backbiter_subset for transcript tiling
+backbiter_subset <- backbiter_subset |>
+  select(turn_id, speaker, transcript_id, utterance)
+
+# export raw merged data
+write.csv(raw_final, "./data/raw/full_dense_subset_raw.csv", row.names = FALSE)
+
+# save raw_final as df
+df <- raw_final
+
+# remove unnecessary data frames
+rm(backbiter, raw, annotated_transcripts, candor, raw_final, raw_excluded)
 ```
 
 # 4. Annotation Checks
@@ -175,13 +174,27 @@ df |>
 df <- df |>
   group_by(transcript_id) |>
   arrange(turn_id, .by_group = TRUE) |>
-  mutate(scaled_turn_id = rescale(turn_id))
+  mutate(scaled_turn_id = round(rescale(turn_id),2))
+
+# print info
+paste0("Final number of annotated backbiter transcripts = ", length(unique(backbiter_subset$transcript_id)),
+       sep = "")
+```
+
+```{r}
+# export backbiter subset for tiling
+write.csv(backbiter_subset, "./data/processed/backbiter_subset_for_tiling.csv", row.names = FALSE)
+# save main df for jaccard similarity
+write.csv(df, "./data/processed/jaccard_data.csv", row.names = FALSE)
+# remove
+rm(backbiter_subset, exclude_by_ann_number)
 ```
 
 ```{r}
 # select only variables of interest to export
 df_subset <- df |>
-  select(transcript_id, turn_id, scaled_turn_id, PID, speaker, utterance, currentUtterance, previous_topic, new_topic)
+  select(transcript_id, turn_id, scaled_turn_id, PID, utterance, 
+         currentUtterance, previous_topic, new_topic)
 
 # export processed data
 write.csv(df_subset, "./data/processed/dense_subset_processed.csv", row.names = FALSE)
@@ -205,32 +218,43 @@ for (i in participants) {
   this_transcript_id <- na.omit(unique(df$transcript_id[df$PID == i]))
   # subset df to just this transcript id
   this_transcript <- subset(df, transcript_id == this_transcript_id)
-  # subset this_transcript to only include NA and the current participant in PID
-  this_transcript <- subset(this_transcript, is.na(PID) | PID == i)
-  # fill in the PID for all rows
-  this_transcript$PID <- i
+  # select just transcript-specific variables
+  transcript_only <- this_transcript |>
+    select(transcript_id, turn_id, scaled_turn_id, speaker.x, utterance) |>
+    distinct() |>
+    rename(speaker = speaker.x)
+  # select participant-specific variables
+  PID_only <- this_transcript |>
+    select(PID, previous_topic, new_topic, turn_id) |>
+    filter(PID == i)
+  # add turn 0 to PID only with "Starting the Call" in new_topic
+  add <- data.frame(transcript_id = this_transcript_id,
+                    PID = i,
+                    previous_topic = NA,
+                    new_topic = "Starting the Call",
+                    turn_id = 0)
+  PID_only <- rbind(add, PID_only)
+  # bring PID_only and transcript_only back together
+  this_transcript <- merge(transcript_only, PID_only, by = c("turn_id", "transcript_id"), all = TRUE)
+  # remove previous topic variable
+  this_transcript <- this_transcript |>
+    select(-previous_topic)
   # fill in new_topic labels across rows
   this_transcript <- this_transcript |> fill(new_topic, .direction = "down")
-  # replace NA in new_topic with "Starting the Call"
-  this_transcript$new_topic[is.na(this_transcript$new_topic)] <- "Starting The Call"
-  # create turn length variable (stop - start) in seconds
-  this_transcript$turn_length_s <- this_transcript$stop - this_transcript$start
   # add a topic order number
   this_transcript <- this_transcript |>
     ungroup() |>
-    mutate(topic_order = as.integer(factor(new_topic, levels = unique(new_topic))))
-  # select only variables of interest
-  this_transcript <- this_transcript |> 
-    select(turn_id, scaled_turn_id, turn_length_s, transcript_id, PID, speaker, utterance, new_topic, topic_order)
+    mutate(topic_order = cumsum(new_topic != lag(new_topic, default = first(new_topic))))
+  # put PID in all rows
+  this_transcript$PID <- i
   # add to all_pid_transcripts
   all_pid_transcripts <- rbind(all_pid_transcripts, this_transcript)
   
   # now that we have that, let's get the number of turns and topic length per participant
   this_pid_summary <- this_transcript |>
     ungroup() |>
-    group_by(PID, transcript_id, new_topic, topic_order) |>
-    summarize(number_of_turns = length(turn_length_s),
-              topic_length = sum(turn_length_s)) |>
+    group_by(PID, new_topic, topic_order) |>
+    summarize(number_of_turns = length(new_topic)) |>
     ungroup() |>
     arrange(topic_order)
   # add to all_pid_topics
@@ -244,26 +268,30 @@ write.csv(all_pid_transcripts, "./data/processed/all_participant_transcripts.csv
 ```
 
 ```{r}
-# average topic length (s) per participant
-all_pid_topics |>
-  group_by(PID) |>
-  summarize(mean_topic_length_s = mean(topic_length)) |>
-  ggplot(aes(x = mean_topic_length_s)) +
-  geom_histogram() +
-  theme_minimal() 
-
 # average topic length (turns) per participant
 all_pid_topics |>
-  group_by(PID) |>
+  dplyr::group_by(PID) |>
   summarize(mean_topic_length_turns = mean(number_of_turns)) |>
   ggplot(aes(x = mean_topic_length_turns)) +
   geom_histogram() +
   theme_minimal()
 ```
 
-
-# 6. Likelihood of switching topics by topic length
+# 6. Average conversation length & number of utterances
 ```{r}
-# 
+# average conversation length
+df |>
+  select(transcript_id, turn_id, start, stop) |>
+  mutate(turn_length = as.numeric(stop) - as.numeric(start)) |>
+  select(transcript_id, turn_id, turn_length) |>
+  distinct() |>
+  group_by(transcript_id) |>
+  summarize(turn_count = max(turn_id),
+            total_length = sum(turn_length)) |>
+  ungroup() |>
+  summarize(average_turn_count = mean(turn_count),
+            sd_turn_count = sd(turn_count),
+            average_total_length = mean(total_length)/60,
+            sd_total_length = sd(total_length)/60)
 ```
 

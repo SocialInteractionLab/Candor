@@ -1,0 +1,78 @@
+---
+title: "Introduction to Coding: Python"
+author: 
+  - name: "**Content Creator: Helen Schmidt & Steven Martinez**"
+  - name: "**Instructor: Helen Schmidt**"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: true
+    self_contained: yes
+    mode: selfcontained
+    df_print: paged    
+    code_folding: show
+    number_sections: true
+    css: "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Presentations/2025.01-COG-Python/misc/style_bootcamp.css"
+    #css: !expr here::here("misc/style_bootcamp.css")
+knit: (function(inputFile, encoding) { 
+      out_dir <- '/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Presentations/2025.01-COG-Python';
+      rmarkdown::render(inputFile,
+                        encoding=encoding, 
+                        output_file=file.path(out_dir, 'index.html')) })
+      # rmarkdown::render(inputFile,
+      #                   encoding=encoding, 
+      #                   output_file=file.path(dirname(inputFile), out_dir, 'index.html')) })                        
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(error = TRUE)
+knitr::opts_knit$set(root.dir = '/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Presentations/2025.01-COG-Python/')
+```
+
+# Introduction
+
+This workshop provides an introduction to the Python programming language. Python is a popular language that many researchers, data scientists, and engineers use to organize data, visualize results, and conduct statistical and computational analyses. 
+
+By the end of this workshop, we hope that you will feel comfortable working independently in Python!
+
+# Pre-Workshop: Download Anaconda and VS Code
+
+Before the workshop, you need to download the [Anaconda Navigator](https://www.anaconda.com/products/navigator) and [Visual Studio Code](https://code.visualstudio.com/). You can think of Visual Studio Code (otherwise known as VS Code) as the RStudio equivalent for Python (and many other languages!). Where things start to differ for Python is the need for the Anaconda Navigator. 
+
+Anaconda is an all-in-one app that lets you install, interact with, and run Python packages and code. Within Anaconda, there are multiple Integrated Development Environments, or IDEs, that are specifically designed for writing, editing, and running Python code. You get a code editor, interpreter, and shell all in one place that operates separately from the Python code that some features of your computer run on. An IDE is a really important step to ensuring that your Python code for data analysis doesn't interfere with any Python on your computer. We'll use Anaconda in this workshop to interact with Jupyter Notebook since it's the most similar to R Markdown, but there are many other IDE options. 
+
+The other benefit of the Anaconda Navigator is the ability to set up virtual environments without needing to access your computer's terminal. A virtual environment establishes a space for you to install packages and use a specified version of Python without interfering with Python versions or packages that are needed to run features on your computer. This isolated space allows you to work on all your data projects without bothering your computer system's Python.
+
+**Downloads:**  
+1. Download Anaconda Navigator: https://www.anaconda.com/products/navigator 
+2. Download VS Code: https://code.visualstudio.com/
+3. Install **Jupyter** within Anaconda Navigator  
+4. Download the `intro-to-coding-2025` folder from COG GitHub (https://github.com/TU-Coding-Outreach-Group/intro-to-coding-2025) by pressing the green **Code** button and downloading the ZIP folder. This folder contains all the necessary files for this workshop.
+
+# Create Virtual Environment in Anaconda
+
+Open the Anaconda Navigator and click on Environments.
+![](images/anaconda-environments.png)
+
+
+# Open VS Code and Launch
+
+```{r}
+library(reticulate)
+```
+
+```{r}
+myenv = conda_list()
+myenv = myenv$name[2]
+use_condaenv(myenv, required = TRUE)
+```
+
+```{python}
+import pandas as pd
+```

@@ -8,6 +8,7 @@ self-contained: true
 ---
 
 # Setup
+
 ```{r, setup, include = FALSE, message = FALSE}
 # set script working directory by checking for user (HS home or lab)
 if (Sys.info()[[7]] == "helenschmidt") {
@@ -18,6 +19,8 @@ if (Sys.info()[[7]] == "helenschmidt") {
 
 ```{r, include = FALSE, message = FALSE}
 # packages
+library(ggrepel)
+library(MetBrewer)
 library(scales)
 library(cowplot)
 library(Rmisc)
@@ -25,23 +28,943 @@ library(ggalt)
 library(lme4)
 library(lmerTest)
 library(emmeans)
+library(philentropy)
+library(entropy)
+library(geomtextpath)
+library(igraph)
+library(ggraph)
+library(tidygraph)
+library(gganimate)
+library(patchwork)
+library(stringdist)
+library(ggrepel)
+library(ggridges)
 library(tidyverse)
 ```
 
-# 1. Tile Cosine Similarity
-
-Cosine similarity of conversation utterances aggregated over 3 turns sliding forward in the conversation by 1 turn. Data frame created using `2-tile.ipynb` script. 
-
 ```{r}
-# load tile data
-df_tile <- read.csv("./data/output/annotated_transcripts_tile_3.csv")
-# preview
-head(df_tile)
+# check for colorblind-friendly palettes
+MetBrewer::colorblind_met_palettes
 ```
 
-## Define annotation matching function
+# 1. Jaccard Similarity
+```{r}
+# load all participant raw data and select just vars of interest
+jaccard_df <- read.csv("./data/processed/jaccard_data.csv") |>
+  select(PID, transcript_id, new_topic, scaled_turn_id)
+```
 
-Examine annotation points for all participants and determine if a given tiled window contains the utterance they marked as signifying a topic shift in conversation. If the utterance they selected is within the window, mark it with "yes" and if not, mark it with a "no". Do this for all participants separately.
+```{r}
+# reshape data to get list of topic switches for each PID
+# should be 1505 aka number of participants
+jaccard_df <- jaccard_df |>
+  filter(!is.na(new_topic)) |>
+  select(PID, transcript_id, scaled_turn_id) |>
+  group_by(PID, transcript_id) |>
+  summarize(topic_switch_turns = list(scaled_turn_id), .groups = "drop")
+```
+
+```{r}
+# define jaccard similarity function
+# window of 3 turns
+jaccard_similarity_3 <- function(turns_A, turns_B) {
+  # create sets of turns within 3-turn window
+  set_A <- unlist(lapply(turns_A, function(x) seq(x - 3, x + 3, by = 1)))
+  set_B <- unlist(lapply(turns_B, function(x) seq(x - 3, x + 3, by = 1)))
+  # jaccard similarity calculation
+  intersection <- length(intersect(set_A, set_B))
+  union <- length(unique(c(set_A, set_B)))
+  # return score
+  return(intersection / union)}
+
+# window of 5 turns
+jaccard_similarity_5 <- function(turns_A, turns_B) {
+  # create sets of turns within 3-turn window
+  set_A <- unlist(lapply(turns_A, function(x) seq(x - 5, x + 5, by = 1)))
+  set_B <- unlist(lapply(turns_B, function(x) seq(x - 5, x + 5, by = 1)))
+  # jaccard similarity calculation
+  intersection <- length(intersect(set_A, set_B))
+  union <- length(unique(c(set_A, set_B)))
+  # return score
+  return(intersection / union)}
+```
+
+## 3 turns
+```{r}
+# calculate jaccard similarity for each transcript
+# and mean score + SD
+jaccard_df |>
+  group_by(transcript_id) |>
+  expand(PID1 = PID, PID2 = PID) |>
+  filter(PID1 != PID2) |>
+  left_join(jaccard_df, by = c("transcript_id", "PID1" = "PID")) |>
+  left_join(jaccard_df, by = c("transcript_id", "PID2" = "PID")) |>
+  rowwise() |>
+  mutate(jaccard_score = jaccard_similarity_3(topic_switch_turns.x, topic_switch_turns.y)) |>
+  select(transcript_id, jaccard_score, PID1, PID2) |>
+  ungroup() |>
+  group_by(transcript_id) |>
+  mutate(transcript_average_jaccard = mean(jaccard_score)) |>
+  ungroup() |>
+  summarize(mean_jaccard_score = mean(transcript_average_jaccard),
+            sd_jaccard_score = sd(transcript_average_jaccard))
+```
+
+**moderate agreement between participants. there were some common marks but also some notable differences**
+
+## 5 turns
+```{r}
+# calculate jaccard similarity for each transcript
+# and mean score + SD
+jaccard_df |>
+  group_by(transcript_id) |>
+  expand(PID1 = PID, PID2 = PID) |>
+  filter(PID1 != PID2) |>
+  left_join(jaccard_df, by = c("transcript_id", "PID1" = "PID")) |>
+  left_join(jaccard_df, by = c("transcript_id", "PID2" = "PID")) |>
+  rowwise() |>
+  mutate(jaccard_score = jaccard_similarity_5(topic_switch_turns.x, topic_switch_turns.y)) |>
+  select(transcript_id, jaccard_score, PID1, PID2) |>
+  ungroup() |>
+  group_by(transcript_id) |>
+  mutate(transcript_average_jaccard = mean(jaccard_score)) |>
+  ungroup() |>
+  summarize(mean_jaccard_score = mean(transcript_average_jaccard),
+            sd_jaccard_score = sd(transcript_average_jaccard))
+```
+
+# 2. Transition Matrix
+```{r}
+# load transcript data
+all_pid_transcripts <- read.csv("./data/processed/all_participant_transcripts.csv")
+# make all topics lowercase
+all_pid_transcripts$new_topic <- tolower(all_pid_transcripts$new_topic)
+
+# load clustered data
+cluster_50 <- read.csv("./data/output/topic_clusters_50.csv")
+# load cluster labels
+cluster_labels <- read.csv("./data/output/topic_cluster_labels_50.csv")
+# add cluster labels to clustered data
+cluster_50 <- merge(cluster_50, cluster_labels, by = "clusters")
+# select only relevant variables
+cluster_50 <- cluster_50 |>
+  select(PID, topic_order, new_topic, cluster_label)
+
+# add clustered data to all_pid_transcripts
+transcripts_clusters <- merge(all_pid_transcripts, cluster_50,
+                              by = c("PID", "new_topic", "topic_order"),
+                              all.x = TRUE)
+
+# check that all observations are accounted for
+anti_join(all_pid_transcripts, transcripts_clusters)
+
+# remove data frames
+rm(all_pid_transcripts, cluster_50, cluster_labels)
+```
+
+```{r}
+# create themes
+# tag 50 clusters with the 10 cluster groups to give better insight into transitions
+transcripts_clusters <- transcripts_clusters |>
+  mutate(group_theme = case_when(
+    # COVID
+    cluster_label == "pandemic, quarantine" ~ "COVID-19",
+    cluster_label == "masks" ~ "COVID-19",
+    cluster_label == "covid" ~ "COVID-19",
+    cluster_label == "health, illness" ~ "COVID-19",
+    cluster_label == "zoom" ~ "COVID-19",
+    # RELATIONSHIPS
+    cluster_label == "family" ~ "relationships",
+    cluster_label == "relationships" ~ "relationships",
+    cluster_label == "parents" ~ "relationships",
+    cluster_label == "kids, children" ~ "relationships",
+    cluster_label == "people, fictional characters" ~ "relationships",
+    # WORK
+    cluster_label == "employment, job" ~ "work",
+    cluster_label == "work" ~ "work",
+    cluster_label == "career, profession" ~ "work",
+    cluster_label == "money, economy" ~ "work",
+    cluster_label == "future plans" ~ "work",
+    # SCHOOL
+    cluster_label == "school" ~ "school",
+    cluster_label == "college" ~ "school",
+    cluster_label == "classes, teaching" ~ "school",
+    cluster_label == "question, discussion" ~ "school",
+    cluster_label == "technology, computer" ~ "school",
+    # RESEARCH
+    cluster_label == "research, study" ~ "research",
+    cluster_label == "prolific" ~ "research",
+    cluster_label == "survey" ~ "research",
+    cluster_label == "technical issue" ~ "research",
+    cluster_label == "time" ~ "research",
+    # INTERACTION
+    cluster_label == "starting the call" ~ "interaction",
+    cluster_label == "ending the call" ~ "interaction",
+    cluster_label == "greeting" ~ "interaction",
+    cluster_label == "goodbye" ~ "interaction",
+    cluster_label == "introduction" ~ "interaction",
+    cluster_label == "ending conversation" ~ "interaction",
+    # PREFERENCES
+    cluster_label == "pets" ~ "preferences",
+    cluster_label == "travel" ~ "preferences",
+    cluster_label == "mood, preferences" ~ "preferences",
+    cluster_label == "personal experience" ~ "preferences",
+    cluster_label == "age" ~ "preferences",
+    # LOCATION
+    cluster_label == "weather" ~ "location",
+    cluster_label == "location" ~ "location",
+    cluster_label == "living situation, home" ~ "location",
+    cluster_label == "city, state, country" ~ "location",
+    cluster_label == "holiday" ~ "location",
+    # NEWS / POLITICS
+    cluster_label == "crime, protest, government" ~ "news & politics",
+    cluster_label == "news, social media" ~ "news & politics",
+    cluster_label == "election, politics" ~ "news & politics",
+    cluster_label == "natural disasters, climate" ~ "news & politics",
+    # ENTERTAINMENT
+    cluster_label == "music, instruments" ~ "entertainment",
+    cluster_label == "television, movies" ~ "entertainment",
+    cluster_label == "items, fashion, clothing" ~ "entertainment",
+    cluster_label == "food, drink" ~ "entertainment",
+    cluster_label == "hobbies, activites, sports" ~ "entertainment",
+  ))
+
+```
+
+```{r}
+# get probabilities of transitioning between each cluster
+transition_matrix <- transcripts_clusters |>
+  ungroup() |>
+  group_by(PID) |>
+  arrange(turn_id, .by_group = TRUE) |>
+  select(PID, cluster_label) |>
+  distinct() |>
+  mutate(current_topic_number = 1:n(),
+         current_topic = cluster_label,
+         prior_topic_number = lag(current_topic_number),
+         prior_topic = lag(cluster_label)) |>
+  na.omit() |>
+  ungroup() |>
+  group_by(prior_topic, current_topic) |>
+  summarize(transition_count = n()) |>
+  ungroup() |>
+  group_by(prior_topic) |>
+  mutate(prior_sum = sum(transition_count)) |>
+  mutate(probability = transition_count/prior_sum)
+```
+
+```{r}
+# get probabilities of transitioning between each theme
+theme_matrix <- transcripts_clusters |>
+  ungroup() |>
+  group_by(PID) |>
+  arrange(turn_id, .by_group = TRUE) |>
+  select(PID, group_theme) |>
+  distinct() |>
+  mutate(current_topic_number = 1:n(),
+         current_topic = group_theme,
+         prior_topic_number = lag(current_topic_number),
+         prior_topic = lag(group_theme)) |>
+  na.omit() |>
+  ungroup() |>
+  group_by(prior_topic, current_topic) |>
+  summarize(transition_count = n()) |>
+  ungroup() |>
+  group_by(prior_topic) |>
+  mutate(prior_sum = sum(transition_count)) |>
+  mutate(probability = transition_count/prior_sum)
+```
+
+## Plot Matrix
+```{r}
+# highlight the highest probability of transitioning to current topic from each prior topic
+top_prob <- transition_matrix |>
+  group_by(prior_topic) |>
+  mutate(highlight = probability == max(probability)) |>
+  ungroup()
+
+# plot!
+ggplot(transition_matrix, aes(x = prior_topic, y = current_topic,
+                           fill = probability)) +
+  geom_tile(color = "white") + # gradient fill
+  geom_tile(data = subset(top_prob, highlight), 
+            aes(x = prior_topic, y = current_topic,
+                fill = probability),
+            color = "black", linewidth = 0.5) + # outline highlight
+  # geom_text(data = subset(top_prob, highlight), 
+  #           aes(x = prior_topic, y = current_topic, label = round(probability, digits = 2))) +
+  labs(title = "Transition Matrix",
+       x = "Prior Topic", y = "Current Topic", fill = "Probability") +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5)) +
+  scale_fill_gradientn(colors = c("white", "#e96052"))
+
+# # save
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/transition_matrix.pdf",
+#        width = 14,
+#        height = 10,
+#        units = "in")
+# 
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/transition_matrix.png",
+#        width = 14,
+#        height = 10,
+#        units = "in")
+```
+
+```{r}
+# highlight the highest probability of transitioning to current theme from each prior theme
+top_prob_theme <- theme_matrix |>
+  group_by(prior_topic) |>
+  mutate(highlight = probability == max(probability)) |>
+  ungroup()
+
+# plot!
+ggplot(theme_matrix, aes(x = prior_topic, y = current_topic,
+                           fill = probability)) +
+  geom_tile(color = "white") + # gradient fill
+  geom_tile(data = subset(top_prob_theme, highlight), 
+            aes(x = prior_topic, y = current_topic,
+                fill = probability),
+            color = "black", linewidth = 0.5) + # outline highlight
+  geom_text(data = subset(top_prob_theme, highlight),
+            aes(x = prior_topic, y = current_topic, label = round(probability, digits = 2))) +
+  labs(title = "Transition Matrix",
+       x = "Prior Topic", y = "Current Topic", fill = "Probability") +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5)) +
+  scale_fill_gradientn(colors = c("white", "#e96052"))
+
+# # save
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/theme_transition_matrix.pdf",
+#        width = 8,
+#        height = 6,
+#        units = "in")
+# 
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/theme_transition_matrix.png",
+#        width = 8,
+#        height = 6,
+#        units = "in")
+```
+
+
+## Plot DAG
+```{r}
+# make an edges data frame (edge list)
+edges <- transition_matrix |>
+  select(from = prior_topic, to = current_topic, probability) |>
+  distinct()
+
+# make a graph object form the edge list
+graph <- as_tbl_graph(edges, directed = TRUE)
+
+# add topic base rate as node attribute to graph
+V(graph)$prior_sum <- transition_matrix |>
+  select(prior_topic, prior_sum) |>
+  distinct() |>
+  pull(prior_sum)
+
+# create scaled version of probability for visualization
+E(graph)$weight <- transition_matrix$probability
+
+# create edges_10 tibble
+edges <- as_tibble(igraph::as_data_frame(graph, what = "edges"))
+
+# map node names to each edge
+edges <- edges |> mutate(edge_color = as.factor(from))
+graph <- graph |>
+  activate(edges) |>
+  mutate(edge_color = edges$edge_color) |>
+  filter(weight >= 0.05)
+
+graph <- graph %>%
+  mutate(edge_group = as.factor(seq_along(E(graph))))
+```
+
+```{r}
+# plot
+set.seed(2)
+ggraph(graph, layout = "circle") +
+  geom_edge_arc(aes(width = weight,  color = edge_color, group = edge_group),
+                check_overlap = TRUE, angle_calc = "along",
+                start_cap = circle(0.05, "in"),
+                end_cap = circle(0.05, "in"), curvature = 0.05) +
+  geom_node_point(aes(size = prior_sum, color = name)) +
+  geom_node_text(aes(label = name, color = name)) +
+  scale_edge_width(range = c(0.1, 2)) +
+  coord_fixed() +
+  theme_void() +
+  scale_edge_color_manual(values = met.brewer("Hiroshige", 50)) +
+  scale_color_manual(values = met.brewer("Hiroshige", 50)) +
+  theme(legend.position = "none")
+
+# # save
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/DAG_names.pdf",
+#        width = 6,
+#        height = 6,
+#        units = "in")
+# 
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/DAG_names.png",
+#        width = 6,
+#        height = 6,
+#        units = "in")
+```
+
+```{r}
+# plot
+set.seed(2)
+ggraph(graph, layout = "circle") +
+  geom_edge_arc(aes(width = weight,  color = edge_color, group = edge_group),
+                check_overlap = TRUE, angle_calc = "along",
+                start_cap = circle(0.05, "in"),
+                end_cap = circle(0.05, "in"), curvature = 0.05) +
+  geom_node_point(aes(size = prior_sum, color = name)) +
+  scale_edge_width(range = c(0.1, 2)) +
+  coord_fixed() +
+  theme_void() +
+  scale_edge_color_manual(values = met.brewer("Hiroshige", 50)) +
+  scale_color_manual(values = met.brewer("Hiroshige", 50)) +
+  theme(legend.position = "none")
+
+# # save
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/DAG.pdf",
+#        width = 6,
+#        height = 6,
+#        units = "in")
+# 
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/DAG.png",
+#        width = 6,
+#        height = 6,
+#        units = "in")
+```
+
+```{r}
+# now make a version with themes
+# make an edges data frame (edge list)
+edges <- theme_matrix |>
+  select(from = prior_topic, to = current_topic, probability) |>
+  distinct()
+
+# make a graph object form the edge list
+graph <- as_tbl_graph(edges, directed = TRUE)
+
+# add topic base rate as node attribute to graph
+V(graph)$prior_sum <- theme_matrix |>
+  select(prior_topic, prior_sum) |>
+  distinct() |>
+  pull(prior_sum)
+
+# create scaled version of probability for visualization
+E(graph)$weight <- theme_matrix$probability
+
+# create edges_10 tibble
+edges <- as_tibble(igraph::as_data_frame(graph, what = "edges"))
+
+# map node names to each edge
+edges <- edges |> mutate(edge_color = as.factor(from))
+graph <- graph |>
+  activate(edges) |>
+  mutate(edge_color = edges$edge_color) |>
+  filter(weight >= 0.125)
+
+graph <- graph %>%
+  mutate(edge_group = as.factor(seq_along(E(graph))))
+```
+
+```{r}
+# plot
+set.seed(2)
+ggraph(graph, layout = "circle") +
+  geom_edge_arc(aes(width = weight,  color = edge_color, group = edge_group),
+                check_overlap = TRUE, angle_calc = "along",
+                start_cap = circle(0.05, "in"),
+                end_cap = circle(0.05, "in"), curvature = 0.05) +
+  geom_node_point(aes(size = prior_sum, color = name)) +
+  geom_node_text(aes(label = name, color = name)) +
+  scale_edge_width(range = c(0.1, 2)) +
+  coord_fixed() +
+  theme_void() +
+  scale_edge_color_manual(values = met.brewer("Hiroshige", 10)) +
+  scale_color_manual(values = met.brewer("Hiroshige", 10)) +
+  theme(legend.position = "none")
+```
+
+```{r}
+# plot
+set.seed(2)
+ggraph(graph, layout = "circle") +
+  geom_edge_arc(aes(width = weight,  color = edge_color, group = edge_group),
+                check_overlap = TRUE, angle_calc = "along",
+                start_cap = circle(0.05, "in"),
+                end_cap = circle(0.05, "in"), curvature = 0.05) +
+  geom_node_point(aes(size = prior_sum, color = name)) +
+  scale_edge_width(range = c(0.1, 2)) +
+  coord_fixed() +
+  theme_void() +
+  scale_edge_color_manual(values = met.brewer("Hiroshige", 10)) +
+  scale_color_manual(values = met.brewer("Hiroshige", 10)) +
+  theme(legend.position = "none")
+
+# # save
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/DAG_theme.pdf",
+#        width = 6,
+#        height = 6,
+#        units = "in")
+# 
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/DAG_theme.png",
+#        width = 6,
+#        height = 6,
+#        units = "in")
+```
+
+
+## Plot Ridges
+
+What proportion of transcripts are in a given cluster topic at a given scaled time point?
+
+```{r}
+# calculate occurrence of each cluster label at each scaled_turn_id across 200 conversations
+# prop = occurrence / 200
+topic_occ <- transcripts_clusters |>
+  select(PID, transcript_id, cluster_label, scaled_turn_id, group_theme) |>
+  distinct() |>
+  group_by(transcript_id, scaled_turn_id, cluster_label, group_theme) |>
+  # create binary indicator of whether a transcript contains the cluster label per turn
+  summarize(label_present = as.integer(any(PID == PID)), .groups = "drop") |>
+  ungroup() |>
+  group_by(scaled_turn_id, cluster_label, group_theme) |>
+  # count how many unique transcripts have each label per turn
+  summarize(transcript_count = sum(label_present), .groups = "drop") |>
+  ungroup() |>
+  # now calculate proportion of transcript count out of total transcripts (200)
+  mutate(prop = transcript_count / 200,
+         scaled_turn_id = scaled_turn_id*100)
+  
+```
+
+```{r}
+# plot
+ggplot(topic_occ, aes(x = scaled_turn_id, 
+                      y = fct_reorder(cluster_label, scaled_turn_id*prop, .fun = sum), 
+                      height = prop, fill = group_theme)) + 
+  geom_density_ridges(stat = "identity", scale = 4, rel_min_height = 0.005) +
+  scale_x_continuous(expand = c(0, 0), limits = c(0,101)) +
+  labs(y = "Cluster Label", x = "Conversation Completion (%)") +
+  scale_fill_manual(values = met.brewer("Hiroshige", 10)) +
+  theme_cowplot() +
+  theme(legend.position = "none")
+
+# # save
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/cluster_ridges.pdf",
+#        width = 6,
+#        height = 10,
+#        units = "in")
+# 
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/cluster_ridges.png",
+#        width = 6,
+#        height = 10,
+#        units = "in")
+```
+
+
+## Entropy
+```{r, message = FALSE, warning = FALSE}
+# 200 conversations, 200 topics at each bin point, cluster count = 200 for each time point
+# Majority across participants who annotated that conversation; in case of tie pick randomly between them
+
+# define empty data frame
+transcript_majority_clusters <- data.frame()
+
+# loop through each unique transcript, and figure out majority cluster label per time bin
+for (i in unique(transcripts_clusters$transcript_id)) {
+  # select just this loop's transcript from transcripts_clusters
+  this_transcript <- transcripts_clusters |> filter(transcript_id == i)
+  # now loop through each scaled integer bin 
+  for (j in unique(this_transcript$scaled_turn_id)) {
+    # select just this loop's bin
+    this_bin <- this_transcript |> filter(scaled_turn_id == j)
+    # count participant-level cluster labels
+    participant_count <- this_bin |>
+      group_by(PID) |>
+      summarize(participant_cluster_label = unique(cluster_label)) |>
+      ungroup() |>
+      group_by(participant_cluster_label) |>
+      mutate(cluster_count = length(participant_cluster_label)) |>
+      # select only label and count
+      select(participant_cluster_label, cluster_count) |>
+      distinct() |>
+      arrange(-cluster_count) |>
+      ungroup()
+    # take top row cluster if only one winner, if not, randomly take one of top labels if tie
+    majority_cluster <- participant_count |>
+      slice_max(order_by = cluster_count, n = 1) # may return more than 1 if tie
+    # randomly sample from rows of majority cluster
+    this_cluster_label <- sample(majority_cluster$participant_cluster_label, 1)
+    # takes top row cluster label if only one majority cluster label
+    # finally, save the bin, transcript ID, and cluster label for entropy analysis
+    save <- data.frame(bin = j,
+                       transcript_id = i,
+                       majority_cluster_label = this_cluster_label)
+    # rbind with transcript_majority_clusters to save for all time points and all transcripts
+    transcript_majority_clusters <- rbind(transcript_majority_clusters, save)
+  }
+}
+
+```
+
+```{r}
+# now compute the percentage appearance of each majority cluster topic across transcripts per time bin
+topic_prop_majority <- transcript_majority_clusters |>
+  group_by(bin, majority_cluster_label) |>
+  summarize(cluster_count = length(transcript_id)) |>
+  ungroup() |>
+  group_by(bin) |>
+  mutate(bin_count = sum(cluster_count)) |>
+  mutate(prop = cluster_count / bin_count) |>
+  ungroup()
+
+# calculate entropy
+topic_entropy <- topic_prop_majority |>
+  group_by(bin) |>
+  summarize(prop_entropy = entropy(prop)) |>
+  mutate(bin = bin * 100)
+```
+
+```{r}
+# plot entropy
+ggplot(topic_entropy, aes(x = bin, y = prop_entropy)) + 
+  geom_line() +
+  scale_x_continuous(expand = c(0, 0), limits = c(0,101)) +
+  labs(y = "Entropy", x = "Conversation Completion (%)") +
+  theme_cowplot() +
+  theme(legend.position = "none")
+
+# # save
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/entropy.pdf",
+#        width = 6,
+#        height = 2,
+#        units = "in")
+# 
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/entropy.png",
+#        width = 6,
+#        height = 2,
+#        units = "in")
+```
+
+# 3. Topic Label + Cluster Label + Utterance Similarity
+
+```{r}
+# load similarity scores between cluster labels, participant labels, and transcript utterances
+sim <- read.csv("./data/output/embedding_similarity.csv")
+  select(PID, transcript_id, cluster_label, scaled_turn_id,
+         topic_cluster_similarity, topic_utterance_similarity, cluster_utterance_similarity)
+```
+
+```{r}
+sim_fixed <- sim |>
+  select(PID, transcript_id, turn_id, scaled_turn_id, topic_cluster_similarity, new_topic,
+         topic_utterance_similarity, cluster_utterance_similarity, number_of_turns) |>
+  distinct() |>
+  arrange(PID, transcript_id, turn_id) |>
+  group_by(PID, transcript_id) |>
+  mutate(topic_order = cumsum(new_topic != lag(new_topic, default = first(new_topic))))
+  
+
+write.csv(sim_fixed, "./data/output/sim_fixed.csv", row.names = FALSE)
+  
+```
+
+
+```{r}
+# micro topic
+sim_micro <- sim_fixed |>
+  group_by(PID, transcript_id, topic_order) |>
+  mutate(within_topic_index = 1:n(),
+         topic_length_group = ifelse(number_of_turns > 50, "long", 
+                                     ifelse(number_of_turns <= 25, "medium", "short"))) |>
+  ungroup()
+  
+sim_micro <- sim_micro |>
+  group_by(within_topic_index) |>
+  summarize(sim = mean(topic_utterance_similarity))
+
+ggplot(sim_micro, aes(x = log(within_topic_index), y = sim)) +
+  geom_point() +
+  geom_smooth(method = "loess") +
+  #geom_smooth(method = "loess", aes(group = topic_length_group)) +
+  theme_cowplot()
+
+# try with geom_line() too
+
+ggplot(sim_micro, aes(x = within_topic_index, y = cluster_utterance_similarity)) +
+  geom_point(alpha = 0.1) +
+  theme_cowplot()
+  
+# group topics into bins of topic lengths
+# do loess by that group instead of all points
+```
+
+
+```{r}
+# print average utterance / cluster label similarity
+sim |>
+  distinct() |>
+  summarize(mean_cluster_utterance_sim = mean(cluster_utterance_similarity),
+            mean_topic_cluster_sim = mean(topic_cluster_similarity),
+            mean_topic_utterance_sim = mean(topic_utterance_similarity))
+```
+
+
+```{r}
+# get transcript-level average utterance + cluster label similarity
+transcript_sim <- sim |>
+  group_by(transcript_id, scaled_turn_id) |>
+  summarize(mean_utterance_cluster_similarity = mean(cluster_utterance_similarity))
+# now average across transcripts
+transcript_sim_sum <- transcript_sim |>
+  group_by(scaled_turn_id) |>
+  summarize(mean_similarity = mean(mean_utterance_cluster_similarity),
+            sd_similarity = sd(mean_utterance_cluster_similarity))
+# plot
+ggplot(transcript_sim_sum, aes(x = scaled_turn_id, y = mean_similarity)) +
+  geom_ribbon(aes(ymin = mean_similarity - sd_similarity,
+                  ymax = mean_similarity + sd_similarity),
+              color = NA, alpha = 0.1) +
+  geom_line() +
+  theme_cowplot()
+```
+
+```{r}
+# get participant-level average utterance + topic/cluster label similarity
+PID_sim <- sim |>
+  group_by(PID, scaled_turn_id) |>
+  summarize(mean_utterance_topic_similarity = mean(topic_utterance_similarity),
+            mean_utterance_cluster_similarity = mean(cluster_utterance_similarity))
+# now average across PIDs
+PID_sim_sum <- PID_sim |>
+  group_by(scaled_turn_id) |>
+  summarize(mean_topic_similarity = mean(mean_utterance_topic_similarity),
+            sd_topic_similarity = sd(mean_utterance_topic_similarity),
+            mean_cluster_similarity = mean(mean_utterance_cluster_similarity),
+            sd_cluster_similarity = sd(mean_utterance_cluster_similarity))
+# plot cluster vs topic lines
+ggplot() +
+  geom_ribbon(data = PID_sim_sum, aes(y = mean_topic_similarity, x = scaled_turn_id,
+                  ymin = mean_topic_similarity - sd_topic_similarity,
+                  ymax = mean_topic_similarity + sd_topic_similarity),
+              fill = "blue", color = NA, alpha = 0.1) +
+  geom_ribbon(data = PID_sim_sum, aes(y = mean_cluster_similarity, x = scaled_turn_id,
+                  ymin = mean_cluster_similarity - sd_cluster_similarity,
+                  ymax = mean_cluster_similarity + sd_cluster_similarity),
+              fill = "red", color = NA, alpha = 0.1) +
+  geom_line(data = PID_sim_sum, aes(x = scaled_turn_id, y = mean_topic_similarity), color = "blue") +
+  geom_line(data = PID_sim_sum, aes(x = scaled_turn_id, y = mean_cluster_similarity), color = "red") +
+  geom_line() +
+  theme_cowplot()
+```
+
+```{r}
+# example participant
+example_sim <- sim |>
+  filter(PID == "[False, '542498adfdf99b691fb384d1', None]") |>
+  select(scaled_turn_id, topic_utterance_similarity, cluster_label) |>
+  distinct() |>
+  arrange(scaled_turn_id) |>
+  mutate(next_x = c(scaled_turn_id[-1],NA),
+         next_y = c(topic_utterance_similarity[-1],NA),
+         next_label = c(cluster_label[-1],NA)) |>
+  na.omit()
+
+# plot
+ggplot(example_sim, aes(x = scaled_turn_id, y = topic_utterance_similarity,
+                    xend = next_x, yend = next_y,
+                    color = cluster_label)) +
+  geom_point(alpha = 0) +
+  geom_segment() +
+  theme_cowplot() +
+  theme(legend.position = "none")
+```
+
+# 4. UMAP
+
+<!-- 2 components, 15 nearest neighbors, minimum distance of 0.1, cosine  -->
+<!-- https://umap-learn.readthedocs.io/en/latest/parameters.html  -->
+
+<!-- ```{r} -->
+<!-- # load umap data -->
+<!-- umap <- read.csv("./data/output/umap_concat.csv") -->
+<!-- #umap <- read.csv("./data/output/umap.csv") -->
+
+<!-- # create branching graph of first to last mention of cluster label (are conversations becoming more idiosyncratic?) -->
+<!-- ``` -->
+
+<!-- Get utterance UMAP at first and last mention of cluster label -->
+
+<!-- ```{r} -->
+<!-- # get first and last mention of each cluster label per participant -->
+<!-- cluster_mention <- transcripts_clusters |> -->
+<!--   select(PID, cluster_label, scaled_turn_id, utterance) |> -->
+<!--   distinct() |> -->
+<!--   group_by(PID, cluster_label) |> -->
+<!--   summarize(turn_first = scaled_turn_id[which.min(scaled_turn_id)], -->
+<!--             utterance_first = utterance[which.min(scaled_turn_id)], -->
+<!--             turn_last = scaled_turn_id[which.max(scaled_turn_id)], -->
+<!--             utterance_last = utterance[which.max(scaled_turn_id)]) -->
+
+<!-- # pivot longer such that I have variables for type (first/last), turn (0-1), and utterance (chr) -->
+<!-- cluster_mention <- cluster_mention |> -->
+<!--   pivot_longer(cols = starts_with("turn"), # select columns that start with "turn" -->
+<!--                names_to = "type",          # name new column for turn type -->
+<!--                names_prefix = "turn_",     # drop prefix -->
+<!--                values_to = "turn") |>      # store values -->
+<!--   pivot_longer(cols = starts_with("utterance"), -->
+<!--                names_to = "utterance_type", -->
+<!--                names_prefix = "utterance_", -->
+<!--                values_to = "utterance") |> -->
+<!--   # combine into a single variable -->
+<!--   mutate(type = ifelse(type == "first", "first", "last"), -->
+<!--          utterance_type = ifelse(utterance_type == "first", "first", "last")) |> -->
+<!--   # drop rows where utterance type and turn type are mismatched -->
+<!--   filter(type == utterance_type) |> -->
+<!--   # drop unnecessary utterance type variable -->
+<!--   select(-utterance_type) -->
+
+<!-- # match with umap of utterance / cluster label at these turns -->
+<!-- umap_match <- umap |> -->
+<!--   filter(type == "utterance") |> -->
+<!--   select(PID, cluster_label, utterance, umap1, umap2) |> -->
+<!--   group_by(PID, cluster_label, utterance) |> -->
+<!--   summarize(umap1_utterance = mean(umap1), -->
+<!--             umap2_utterance = mean(umap2)) -->
+
+<!-- # merge -->
+<!-- umap_summary <- merge(cluster_mention, umap_match, by = c("PID", "utterance", "cluster_label")) -->
+
+<!-- # check join -->
+<!-- anti_join(umap_summary, cluster_mention) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # summarize to get average first and last UMAP per cluster_label -->
+<!-- umap_first <- umap_match |> -->
+<!--   ungroup() |> -->
+<!--   filter(utterance_type == "first") |> -->
+<!--   group_by(cluster_label) |> -->
+<!--   summarize(umap1_first_avg = mean(umap1), -->
+<!--             umap2_first_avg = mean(umap2)) -->
+
+<!-- umap_last <- umap_match |> -->
+<!--   ungroup() |> -->
+<!--   filter(utterance_type == "last") |> -->
+<!--   group_by(cluster_label) |> -->
+<!--   summarize(umap1_last_avg = mean(umap1), -->
+<!--             umap2_last_avg = mean(umap2)) -->
+
+<!-- # summary -->
+<!-- umap_summary <- merge(umap_first, umap_last, by = "cluster_label") -->
+
+<!-- # transform -->
+<!-- umap_summary <- umap_summary |> -->
+<!--   gather(key = "time", value = "value", -cluster_label) |> -->
+<!--   separate(time, into = c("umap","turn"), sep = "_") |> -->
+<!--   spread(key = "umap", value = "value") -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # plot -->
+<!-- ggplot(data = umap_summary, aes(x = umap1, y = umap2,  -->
+<!--                                 group = cluster_label, color = cluster_label, shape = turn)) + -->
+<!--   geom_point() + -->
+<!--   geom_line() + -->
+<!--   theme_cowplot() + -->
+<!--   theme(legend.position = "none") -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- # first and last mention of cluster label per participant -->
+<!-- cluster_mention <- umap |> -->
+<!--   select(PID, cluster_label, scaled_turn_id, umap1, umap2) |> -->
+<!--   group_by(PID, cluster_label) |> -->
+<!--   summarize(umap1_first = umap1[which.min(scaled_turn_id)], -->
+<!--             umap1_last = umap1[which.max(scaled_turn_id)], -->
+<!--             umap2_first = umap2[which.min(scaled_turn_id)], -->
+<!--             umap2_last = umap2[which.max(scaled_turn_id)]) -->
+
+<!-- # now average across participants -->
+<!-- cluster_mention_summary <- cluster_mention |> -->
+<!--   group_by(cluster_label) |> -->
+<!--   summarize(umap1_first_avg = mean(umap1_first), -->
+<!--             umap1_last_avg = mean(umap1_last), -->
+<!--             umap2_first_avg = mean(umap2_first), -->
+<!--             umap2_last_avg = mean(umap2_last)) |> -->
+<!--   gather(key = "time", value = "value", -cluster_label) |> -->
+<!--   separate(time, into = c("umap","turn"), sep = "_") |> -->
+<!--   spread(key = "umap", value = "value") -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # plot! -->
+<!-- ggplot(data = cluster_mention_summary, aes(x = umap1, y = umap2, group = cluster_label, color = cluster_label)) + -->
+<!--   facet_wrap(.~cluster_label, nrow = 5, scales = "free") + -->
+<!--   geom_point() + -->
+<!--   geom_line() + -->
+<!--   theme(legend.position = "none") -->
+
+<!-- ggplot(result, aes(x = map1, y = map2, group = label, color = label)) + -->
+<!--   geom_point() + -->
+<!--   geom_line() + -->
+<!--   labs(x = "Map1", y = "Map2", title = "First and Last Map Values for Each Label") + -->
+<!--   theme_minimal() -->
+<!-- ``` -->
+
+# 5. Tiling
+
+```{r}
+# load tiled cosine similarity data
+df_tile_10 <- read.csv("./data/output/annotated_transcripts_tile_10_0.csv")
+df_tile_15 <- read.csv("./data/output/annotated_transcripts_tile_15_0.csv")
+df_tile_20 <- read.csv("./data/output/annotated_transcripts_tile_20_0.csv")
+```
+
+```{r}
+# load annotation data 
+df_ann <- read.csv("./data/processed/dense_subset_processed.csv") |>
+  filter(!is.na(PID))
+```
+
+```{r}
+# within annotation data, mark participants as coarse, middle, or granular annotators based on the lower, middle, and upper thirds of annotations provided
+
+# calculate number of annotations per participant
+annotation_numbers <- df_ann |>
+  dplyr::group_by(PID) |>
+  summarize(total_PID_annotations = length(turn_id)) # should be 1505, number of participants
+
+# also create mutated variable in df_ann
+df_ann <- df_ann |>
+  dplyr::group_by(PID) |>
+  mutate(total_PID_annotations = length(turn_id)) |>
+  ungroup()
+
+# calculate quantiles to split number of PID annotations into three groups
+quantiles <- quantile(annotation_numbers$total_PID_annotations,
+                      probs = c(0, 1/3, 2/3, 1))
+
+# create new variable in df_ann 
+df_ann$annotation_behavior <- cut(df_ann$total_PID_annotations, breaks = quantiles,
+                                  include.lowest = TRUE, 
+                                  labels = c("coarse", "middle", "granular"))
+
+# remove data not needed
+rm(annotation_numbers, quantiles)
+```
+
+**Create an annotation matching function.** Examine annotation points for all participants and determine if a given tiled window contains the utterance they marked as signifying a topic shift in conversation. If the utterance they selected is within the window, mark it with "yes" and if not, mark it with a "no". Do this for all participants separately.
 
 ```{r}
 # write a function to check if annotation turn ID is within a tiled window of utterances
@@ -57,6 +980,8 @@ detect_window_annotations <- function(tiling_df, annotation_df) {
     # get corresponding transcript they annotated from tiling DF
     this_transcript_id <- unique(this_annotation$transcript_id)
     this_transcript <- tiling_df |> filter(transcript_id == this_transcript_id)
+    # save PID annotation behavior
+    behavior <- unique(this_annotation$annotation_behavior)
     # add new variables to this_transcript to hold this participant's annotated turn / label
     this_transcript$annotated_turn <- NA
     this_transcript$annotated_label <- NA
@@ -65,8 +990,9 @@ detect_window_annotations <- function(tiling_df, annotation_df) {
     PID_turns <- this_annotation$turn_id
     # save a version of this_transcript for looping through annotations
     annotations_result <- this_transcript
-    # add participant ID
+    # add participant ID and annotation behavior
     annotations_result$PID <- this_PID
+    annotations_result$annotation_behavior <- behavior
     # 1a) does the gap turn (i.e., A_turn_end) == topic label turn selected?
     annotations_result$annotated_turn <- ifelse(annotations_result$A_end_turn %in% PID_turns,
                                                 "yes", "no")
@@ -81,238 +1007,1815 @@ detect_window_annotations <- function(tiling_df, annotation_df) {
 }
 ```
 
-## Load annotation data & apply function
+## 10 utterances
 ```{r}
-# load annotation data 
-df_ann <- read.csv("./data/processed/dense_subset_processed.csv") |>
-  filter(!is.na(PID))
-
 # apply function
-tile_ann <- detect_window_annotations(df_tile, df_ann)
+tile_ann_10 <- detect_window_annotations(df_tile_10, df_ann)
 ```
 
-## calculate annotation distance
 ```{r}
 # calculate distance from the human annotation within the tile data
-ann_dist <- tile_ann |>
+ann_dist_10 <- tile_ann_10 |>
   dplyr::group_by(transcript_id) |>
-  #arrange(A_end_turn, .by_group = TRUE) |>
   mutate(annotation_dist = case_when(annotated_turn == "yes" ~ 0,
-                                     lag(annotated_turn, 1) == "yes" ~ 1,
-                                     lag(annotated_turn, 2) == "yes" ~ 2,
-                                     lead(annotated_turn, 1) == "yes" ~ -1,
-                                     lead(annotated_turn, 2) == "yes" ~ -2,
-                                     .default = NA))
-
-# create data frame that only contains cosine similarity, annotation distance, and participant ID to ensure no duplicates when calculating cosine similarity by annotation distance averages
-PID_distance <- ann_dist |> 
-  select(transcript_id, annotation_dist, cosine_similarity, PID) |>
-  na.omit() ##|>
-  #mutate(annotation_dist = as.factor(annotation_dist))
-
-# fit model
-dist_m1 <- lmer(cosine_similarity ~ as.factor(annotation_dist) + (1|PID), data = PID_distance)
-summary(dist_m1)
-# pairwise comparisons
-em_m1 <- emmeans(dist_m1, specs = pairwise ~ annotation_dist)
-em_m1$contrasts
-
+                                     lag(annotated_turn, 1) == "yes" ~ 1, lag(annotated_turn, 2) == "yes" ~ 2,
+                                     lag(annotated_turn, 3) == "yes" ~ 3, lag(annotated_turn, 4) == "yes" ~ 4,
+                                     lag(annotated_turn, 5) == "yes" ~ 5, lag(annotated_turn, 6) == "yes" ~ 6,
+                                     lag(annotated_turn, 7) == "yes" ~ 7, lag(annotated_turn, 8) == "yes" ~ 8,
+                                     lag(annotated_turn, 9) == "yes" ~ 9, lag(annotated_turn, 10) == "yes" ~ 10,
+                                     lag(annotated_turn, 11) == "yes" ~ 11, lag(annotated_turn, 12) == "yes" ~ 12,
+                                     lag(annotated_turn, 13) == "yes" ~ 13, lag(annotated_turn, 14) == "yes" ~ 14,
+                                     lag(annotated_turn, 15) == "yes" ~ 15, lag(annotated_turn, 16) == "yes" ~ 16,
+                                     lag(annotated_turn, 17) == "yes" ~ 17, lag(annotated_turn, 18) == "yes" ~ 18,
+                                     lag(annotated_turn, 19) == "yes" ~ 19, lag(annotated_turn, 20) == "yes" ~ 20,
+                                     lag(annotated_turn, 21) == "yes" ~ 21, lag(annotated_turn, 22) == "yes" ~ 22,
+                                     lag(annotated_turn, 23) == "yes" ~ 23, lag(annotated_turn, 24) == "yes" ~ 24,
+                                     lag(annotated_turn, 25) == "yes" ~ 25, lag(annotated_turn, 26) == "yes" ~ 26,
+                                     lag(annotated_turn, 27) == "yes" ~ 27, lag(annotated_turn, 28) == "yes" ~ 28,
+                                     lag(annotated_turn, 29) == "yes" ~ 29, 
+                                     lead(annotated_turn, 1) == "yes" ~ -1, lead(annotated_turn, 2) == "yes" ~ -2,
+                                     lead(annotated_turn, 3) == "yes" ~ -3, lead(annotated_turn, 4) == "yes" ~ -4,
+                                     lead(annotated_turn, 5) == "yes" ~ -5, lead(annotated_turn, 6) == "yes" ~ -6,
+                                     lead(annotated_turn, 7) == "yes" ~ -7, lead(annotated_turn, 8) == "yes" ~ -8,
+                                     lead(annotated_turn, 9) == "yes" ~ -9, lead(annotated_turn, 10) == "yes" ~ -10,
+                                     lead(annotated_turn, 11) == "yes" ~ -11, lead(annotated_turn, 12) == "yes" ~ -12,
+                                     lead(annotated_turn, 13) == "yes" ~ -13, lead(annotated_turn, 14) == "yes" ~ -14,
+                                     lead(annotated_turn, 15) == "yes" ~ -15, lead(annotated_turn, 16) == "yes" ~ -16,
+                                     lead(annotated_turn, 17) == "yes" ~ -17, lead(annotated_turn, 18) == "yes" ~ -18,
+                                     lead(annotated_turn, 19) == "yes" ~ -19, lead(annotated_turn, 20) == "yes" ~ -20,
+                                     lead(annotated_turn, 21) == "yes" ~ -21, lead(annotated_turn, 22) == "yes" ~ -22,
+                                     lead(annotated_turn, 23) == "yes" ~ -23, lead(annotated_turn, 24) == "yes" ~ -24,
+                                     lead(annotated_turn, 25) == "yes" ~ -25, lead(annotated_turn, 26) == "yes" ~ -26,
+                                     lead(annotated_turn, 27) == "yes" ~ -27, lead(annotated_turn, 28) == "yes" ~ -28,
+                                     lead(annotated_turn, 29) == "yes" ~ -29,
+                                     .default = NA)) |>
+  select(transcript_id, annotation_dist, cosine_similarity, PID, annotation_behavior) |>
+  na.omit()
 ```
 
-## plot
 ```{r}
 # get summary for annotation distance
-dist_summary <- summarySE(PID_distance, measurevar = "cosine_similarity", groupvars = "annotation_dist")
+dist_summary_10 <- summarySE(ann_dist_10, measurevar = "cosine_similarity", 
+                               groupvars = c("annotation_dist", "annotation_behavior"))
+# only include -15 to 15
+dist_subset_10 <- dist_summary_10 |>
+  filter(annotation_dist >= -15 & annotation_dist <= 15)
 
 # plot
-ggplot(data = dist_summary, aes(x = annotation_dist, y = cosine_similarity)) +
+plot10 <- ggplot(data = dist_subset_10, aes(x = annotation_dist, y = cosine_similarity,
+                                     color = annotation_behavior, fill = annotation_behavior)) +
+  geom_vline(aes(xintercept = 0), color = "grey", linetype = "dashed") +
   geom_point(alpha = 0) +
-  geom_line(color = "#D8B4A0", linewidth = 2) +
+  geom_line(linewidth = 2) +
   geom_ribbon(aes(ymin = cosine_similarity - se, ymax = cosine_similarity + se), 
-              alpha = 0.25, fill = "#D8B4A0") +
-  labs(x = "Turn Distance from Annotation", y = "Cosine Similarity") +
-  theme_cowplot()
-
-```
-
-***
-
-# 2. TSNE
-
-Do cluster labels appropriately cluster topic labels provided by participants?
-
-```{r}
-# load tsne values for HS-provided cluster labels and participant-provided topic labels
-tsne <- read.csv("./data/output/tsne_25.csv")
-
-# subset to just participant and clustered types
-tsne_cluster <- tsne |> filter(type == "cluster")
-tsne_participant <- tsne |> filter(type == "participant")
-```
-
-```{r}
-# compute the smallest polygon to enclose cluster points
-# get convex hulls for each cluster
-hulls <- tsne_participant |>
-  group_by(clusters) |>
-  do({
-    chull_points <- .[chull(.$tsne_1, .$tsne_2), ]
-    data.frame(x = chull_points$tsne_1, y = chull_points$tsne_2)
-  }) |>
-  ungroup()
-```
-
-
-```{r}
-# plot cluster labels
-ggplot() +
-  #geom_polygon(data = hulls, aes(x = x, y = y, group = clusters, fill = as.factor(clusters)), alpha = 0.1) +
-  geom_text(data = tsne_cluster, aes(x = tsne_1, y = tsne_2, color = as.factor(clusters), label = topic)) +
-  geom_point(data = tsne_cluster, aes(x = tsne_1, y = tsne_2, color = as.factor(clusters)), size = 3) +
-  geom_point(data = tsne_participant, aes(x = tsne_1, y = tsne_2, color = as.factor(clusters)), alpha = 0.01) +
+              alpha = 0.25, color = NA) +
+  labs(x = "Turn Distance from Annotation", y = "Cosine Similarity",
+       title = "10 Adjacent Utterances") +
+  scale_color_manual(values = c("#e96052", "#ffd16d", "#4f8dae"), name = 'Annotation\nBehavior') +
+  scale_fill_manual(values = c("#e96052", "#ffd16d", "#4f8dae"), name = 'Annotation\nBehavior') +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 4)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) +
   theme_cowplot() +
-  theme(legend.position = "none")
+  theme(plot.title = element_text(hjust = 0.5))
+
+# show
+plot10
+
 ```
 
-
-
-***
-
-**return to make figure showing conversation dynamics for some exemplary transcripts**
+## 15 utterances
+```{r}
+# apply function
+tile_ann_15 <- detect_window_annotations(df_tile_15, df_ann)
+```
 
 ```{r}
-# load tile data
-df_tsne <- read.csv("./data/output/annotated_transcripts_tsne.csv")
-# preview
-head(df_tsne)
+# calculate distance from the human annotation within the tile data
+ann_dist_15 <- tile_ann_15 |>
+  dplyr::group_by(transcript_id) |>
+  mutate(annotation_dist = case_when(annotated_turn == "yes" ~ 0,
+                                     lag(annotated_turn, 1) == "yes" ~ 1, lag(annotated_turn, 2) == "yes" ~ 2,
+                                     lag(annotated_turn, 3) == "yes" ~ 3, lag(annotated_turn, 4) == "yes" ~ 4,
+                                     lag(annotated_turn, 5) == "yes" ~ 5, lag(annotated_turn, 6) == "yes" ~ 6,
+                                     lag(annotated_turn, 7) == "yes" ~ 7, lag(annotated_turn, 8) == "yes" ~ 8,
+                                     lag(annotated_turn, 9) == "yes" ~ 9, lag(annotated_turn, 10) == "yes" ~ 10,
+                                     lag(annotated_turn, 11) == "yes" ~ 11, lag(annotated_turn, 12) == "yes" ~ 12,
+                                     lag(annotated_turn, 13) == "yes" ~ 13, lag(annotated_turn, 14) == "yes" ~ 14,
+                                     lag(annotated_turn, 15) == "yes" ~ 15, lag(annotated_turn, 16) == "yes" ~ 16,
+                                     lag(annotated_turn, 17) == "yes" ~ 17, lag(annotated_turn, 18) == "yes" ~ 18,
+                                     lag(annotated_turn, 19) == "yes" ~ 19, lag(annotated_turn, 20) == "yes" ~ 20,
+                                     lag(annotated_turn, 21) == "yes" ~ 21, lag(annotated_turn, 22) == "yes" ~ 22,
+                                     lag(annotated_turn, 23) == "yes" ~ 23, lag(annotated_turn, 24) == "yes" ~ 24,
+                                     lag(annotated_turn, 25) == "yes" ~ 25, lag(annotated_turn, 26) == "yes" ~ 26,
+                                     lag(annotated_turn, 27) == "yes" ~ 27, lag(annotated_turn, 28) == "yes" ~ 28,
+                                     lag(annotated_turn, 29) == "yes" ~ 29, 
+                                     lead(annotated_turn, 1) == "yes" ~ -1, lead(annotated_turn, 2) == "yes" ~ -2,
+                                     lead(annotated_turn, 3) == "yes" ~ -3, lead(annotated_turn, 4) == "yes" ~ -4,
+                                     lead(annotated_turn, 5) == "yes" ~ -5, lead(annotated_turn, 6) == "yes" ~ -6,
+                                     lead(annotated_turn, 7) == "yes" ~ -7, lead(annotated_turn, 8) == "yes" ~ -8,
+                                     lead(annotated_turn, 9) == "yes" ~ -9, lead(annotated_turn, 10) == "yes" ~ -10,
+                                     lead(annotated_turn, 11) == "yes" ~ -11, lead(annotated_turn, 12) == "yes" ~ -12,
+                                     lead(annotated_turn, 13) == "yes" ~ -13, lead(annotated_turn, 14) == "yes" ~ -14,
+                                     lead(annotated_turn, 15) == "yes" ~ -15, lead(annotated_turn, 16) == "yes" ~ -16,
+                                     lead(annotated_turn, 17) == "yes" ~ -17, lead(annotated_turn, 18) == "yes" ~ -18,
+                                     lead(annotated_turn, 19) == "yes" ~ -19, lead(annotated_turn, 20) == "yes" ~ -20,
+                                     lead(annotated_turn, 21) == "yes" ~ -21, lead(annotated_turn, 22) == "yes" ~ -22,
+                                     lead(annotated_turn, 23) == "yes" ~ -23, lead(annotated_turn, 24) == "yes" ~ -24,
+                                     lead(annotated_turn, 25) == "yes" ~ -25, lead(annotated_turn, 26) == "yes" ~ -26,
+                                     lead(annotated_turn, 27) == "yes" ~ -27, lead(annotated_turn, 28) == "yes" ~ -28,
+                                     lead(annotated_turn, 29) == "yes" ~ -29,
+                                     .default = NA)) |>
+  select(transcript_id, annotation_dist, cosine_similarity, PID, annotation_behavior) |>
+  na.omit()
+```
 
-# subset to one example conversation
-tsne_subset <- df_tsne |> filter(transcript_id == "01849238-f5f0-487e-bca4-7b4fe0c9625c")
+```{r}
+# get summary for annotation distance
+dist_summary_15 <- summarySE(ann_dist_15, measurevar = "cosine_similarity", 
+                               groupvars = c("annotation_dist", "annotation_behavior"))
+# only include -15 to 15
+dist_subset_15 <- dist_summary_15 |>
+  filter(annotation_dist >= -15 & annotation_dist <= 15)
+
+# plot
+plot15 <- ggplot(data = dist_subset_15, aes(x = annotation_dist, y = cosine_similarity,
+                                     color = annotation_behavior, fill = annotation_behavior)) +
+  geom_vline(aes(xintercept = 0), color = "grey", linetype = "dashed") +
+  geom_point(alpha = 0) +
+  geom_line(linewidth = 2) +
+  geom_ribbon(aes(ymin = cosine_similarity - se, ymax = cosine_similarity + se), 
+              alpha = 0.25, color = NA) +
+  labs(x = "Turn Distance from Annotation", y = "Cosine Similarity",
+       title = "15 Adjacent Utterances") +
+  scale_color_manual(values = c("#e96052", "#ffd16d", "#4f8dae"), name = 'Annotation\nBehavior') +
+  scale_fill_manual(values = c("#e96052", "#ffd16d", "#4f8dae"), name = 'Annotation\nBehavior') +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 4)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) +
+  theme_cowplot() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# show
+plot15
+
+```
+
+## 20 utterances
+```{r}
+# apply function
+tile_ann_20 <- detect_window_annotations(df_tile_20, df_ann)
+```
+
+```{r}
+# calculate distance from the human annotation within the tile data
+ann_dist_20 <- tile_ann_20 |>
+  dplyr::group_by(transcript_id) |>
+  mutate(annotation_dist = case_when(annotated_turn == "yes" ~ 0,
+                                     lag(annotated_turn, 1) == "yes" ~ 1, lag(annotated_turn, 2) == "yes" ~ 2,
+                                     lag(annotated_turn, 3) == "yes" ~ 3, lag(annotated_turn, 4) == "yes" ~ 4,
+                                     lag(annotated_turn, 5) == "yes" ~ 5, lag(annotated_turn, 6) == "yes" ~ 6,
+                                     lag(annotated_turn, 7) == "yes" ~ 7, lag(annotated_turn, 8) == "yes" ~ 8,
+                                     lag(annotated_turn, 9) == "yes" ~ 9, lag(annotated_turn, 10) == "yes" ~ 10,
+                                     lag(annotated_turn, 11) == "yes" ~ 11, lag(annotated_turn, 12) == "yes" ~ 12,
+                                     lag(annotated_turn, 13) == "yes" ~ 13, lag(annotated_turn, 14) == "yes" ~ 14,
+                                     lag(annotated_turn, 15) == "yes" ~ 15, lag(annotated_turn, 16) == "yes" ~ 16,
+                                     lag(annotated_turn, 17) == "yes" ~ 17, lag(annotated_turn, 18) == "yes" ~ 18,
+                                     lag(annotated_turn, 19) == "yes" ~ 19, lag(annotated_turn, 20) == "yes" ~ 20,
+                                     lag(annotated_turn, 21) == "yes" ~ 21, lag(annotated_turn, 22) == "yes" ~ 22,
+                                     lag(annotated_turn, 23) == "yes" ~ 23, lag(annotated_turn, 24) == "yes" ~ 24,
+                                     lag(annotated_turn, 25) == "yes" ~ 25, lag(annotated_turn, 26) == "yes" ~ 26,
+                                     lag(annotated_turn, 27) == "yes" ~ 27, lag(annotated_turn, 28) == "yes" ~ 28,
+                                     lag(annotated_turn, 29) == "yes" ~ 29, 
+                                     lead(annotated_turn, 1) == "yes" ~ -1, lead(annotated_turn, 2) == "yes" ~ -2,
+                                     lead(annotated_turn, 3) == "yes" ~ -3, lead(annotated_turn, 4) == "yes" ~ -4,
+                                     lead(annotated_turn, 5) == "yes" ~ -5, lead(annotated_turn, 6) == "yes" ~ -6,
+                                     lead(annotated_turn, 7) == "yes" ~ -7, lead(annotated_turn, 8) == "yes" ~ -8,
+                                     lead(annotated_turn, 9) == "yes" ~ -9, lead(annotated_turn, 10) == "yes" ~ -10,
+                                     lead(annotated_turn, 11) == "yes" ~ -11, lead(annotated_turn, 12) == "yes" ~ -12,
+                                     lead(annotated_turn, 13) == "yes" ~ -13, lead(annotated_turn, 14) == "yes" ~ -14,
+                                     lead(annotated_turn, 15) == "yes" ~ -15, lead(annotated_turn, 16) == "yes" ~ -16,
+                                     lead(annotated_turn, 17) == "yes" ~ -17, lead(annotated_turn, 18) == "yes" ~ -18,
+                                     lead(annotated_turn, 19) == "yes" ~ -19, lead(annotated_turn, 20) == "yes" ~ -20,
+                                     lead(annotated_turn, 21) == "yes" ~ -21, lead(annotated_turn, 22) == "yes" ~ -22,
+                                     lead(annotated_turn, 23) == "yes" ~ -23, lead(annotated_turn, 24) == "yes" ~ -24,
+                                     lead(annotated_turn, 25) == "yes" ~ -25, lead(annotated_turn, 26) == "yes" ~ -26,
+                                     lead(annotated_turn, 27) == "yes" ~ -27, lead(annotated_turn, 28) == "yes" ~ -28,
+                                     lead(annotated_turn, 29) == "yes" ~ -29,
+                                     .default = NA)) |>
+  select(transcript_id, annotation_dist, cosine_similarity, PID, annotation_behavior) |>
+  na.omit()
+```
+
+```{r}
+# get summary for annotation distance
+dist_summary_20 <- summarySE(ann_dist_20, measurevar = "cosine_similarity", 
+                               groupvars = c("annotation_dist", "annotation_behavior"))
+# only include -15 to 15
+dist_subset_20 <- dist_summary_20 |>
+  filter(annotation_dist >= -15 & annotation_dist <= 15)
+
+# plot
+plot20 <- ggplot(data = dist_subset_20, aes(x = annotation_dist, y = cosine_similarity,
+                                     color = annotation_behavior, fill = annotation_behavior)) +
+  geom_vline(aes(xintercept = 0), color = "grey", linetype = "dashed") +
+  geom_point(alpha = 0) +
+  geom_line(linewidth = 2) +
+  geom_ribbon(aes(ymin = cosine_similarity - se, ymax = cosine_similarity + se), 
+              alpha = 0.25, color = NA) +
+  labs(x = "Turn Distance from Annotation", y = "Cosine Similarity",
+       title = "20 Adjacent Utterances") +
+  scale_color_manual(values = c("#e96052", "#ffd16d", "#4f8dae"), name = 'Annotation\nBehavior') +
+  scale_fill_manual(values = c("#e96052", "#ffd16d", "#4f8dae"), name = 'Annotation\nBehavior') +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 4)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) +
+  theme_cowplot() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# show
+plot20
+
+```
+
+## Combined
+```{r}
+# create faceted image
+combined <- plot10 + plot15 + plot20 +
+  plot_layout(widths = c(1,1,1), guides = "collect") +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(size = 20, face = "bold", family = "sans"))
+
+# save combined figure
+ggsave(plot = combined,
+       filename = "./cogsci/figures/tile-combined.pdf",
+       dpi = 300,
+       units = "in",
+       width = 16,
+       heigh = 6)
+
+ggsave(plot = combined,
+       filename = "./cogsci/figures/tile-combined.png",
+       dpi = 300,
+       units = "in",
+       width = 16,
+       heigh = 6)
+
+# show combined figure
+combined
+```
+
+# 6. Illustrative Example
+
+```{r}
+# one participant's annotation locations
+
+# example transcript
+transcript <- "f81a3aa9-3cb3-4df0-ba18-9b1f6f19e5ba"
+# example PID
+PID_coarse <- "[False, '66bbc95713288ad8d1e8578d', None]"
+PID_granular <- "[False, '6724d4dc0e4e106b64f4dd4b', None]"
+
+# COARSE
+example_coarse <- transcripts_clusters |>
+  filter(transcript_id == transcript & PID == PID_coarse) |>
+  select(PID, scaled_turn_id, cluster_label, new_topic)
+# get similarity data
+example_coarse <- merge(example_coarse, sim, by = c("PID", "scaled_turn_id", "cluster_label")) |>
+  group_by(scaled_turn_id, cluster_label, new_topic) |>
+  summarize(avg_topic_utterance_similarity = mean(topic_utterance_similarity),
+            avg_topic_cluster_similarity = mean(topic_cluster_similarity),
+            avg_cluster_utterance_similarity = mean(cluster_utterance_similarity))
+# tag annotation switches
+example_coarse <- example_coarse |>
+  ungroup() |>
+  arrange(scaled_turn_id) |>
+  mutate(switch_topic = ifelse(new_topic != lag(new_topic), 1, NA),
+         switch_cluster = ifelse(cluster_label != lag(cluster_label), 1, NA))
+
+# GRANULAR
+example_granular <- transcripts_clusters |>
+  filter(transcript_id == transcript & PID == PID_granular) |>
+  select(PID, scaled_turn_id, cluster_label, new_topic)
+# get similarity data
+example_granular <- merge(example_granular, sim, by = c("PID", "scaled_turn_id", "cluster_label")) |>
+  group_by(scaled_turn_id, cluster_label, new_topic) |>
+  summarize(avg_topic_utterance_similarity = mean(topic_utterance_similarity),
+            avg_topic_cluster_similarity = mean(topic_cluster_similarity),
+            avg_cluster_utterance_similarity = mean(cluster_utterance_similarity))
+# tag annotation switches
+example_granular <- example_granular |>
+  ungroup() |>
+  arrange(scaled_turn_id) |>
+  mutate(switch_topic = ifelse(new_topic != lag(new_topic), 1, NA),
+         switch_cluster = ifelse(cluster_label != lag(cluster_label), 1, NA))
+
 ```
 
 ```{r}
 # plot
-ggplot(data = tsne_subset, aes(x = tsne_1, y = tsne_2, color = speaker)) +
-  geom_point() +
-  geom_path() +
+ggplot() +
+  geom_tile(data = example_coarse, aes(x = scaled_turn_id*100, y = 0.5, fill = cluster_label)) +
+  geom_line(data = example_coarse, aes(x = scaled_turn_id*100, y = avg_topic_utterance_similarity),
+            linetype = "solid") +
+  geom_line(data = example_coarse, aes(x = scaled_turn_id*100, y = avg_topic_cluster_similarity),
+            linetype = "dashed") +
+  geom_line(data = example_coarse, aes(x = scaled_turn_id*100, y = avg_cluster_utterance_similarity),
+            linetype = "dotdash", color = "black") +
+  # geom_vline(data = example_coarse[!is.na(example_coarse$switch_cluster),],
+  #            aes(xintercept = (scaled_turn_id*100)-0.5, color = cluster_label),
+  #            color = "white", linetype = "dotted") +
   theme_cowplot() +
-  theme(legend.position = "none")
-```
-
-***
-
-# 3. Topic lengths & transitions
-
-```{r}
-# load participant-level transcripts and match to category clusters to see...
-# 1) how long people tend to spend on certain topics
-# 2) do people tend to move from one topic to another
-
-# load data
-all_pid_transcripts <- read.csv("./data/processed/all_participant_transcripts.csv")
-# make all topics lowercase
-all_pid_transcripts$new_topic <- tolower(all_pid_transcripts$new_topic)
-
-# load 25 cluster data
-cluster_25 <- read.csv("./data/output/topic_clusters_25.csv")
-
-# merge by PID, transcript_id, new_topic, and topic_order
-transcripts_clusters <- merge(all_pid_transcripts, cluster_25, 
-                              by = c("PID", "transcript_id", 
-                                     "new_topic", "topic_order"))
-
-#test <- anti_join(all_pid_transcripts, transcripts_clusters)
-
-# finally, add cluster labels based on clusters
-cluster_labels <- read.csv("./data/output/topic_cluster_labels_25.csv")
-transcripts_clusters <- merge(transcripts_clusters, cluster_labels,
-                              by = "clusters")
-```
-
-Example participant, example transcript.
-
-```{r}
-example <- transcripts_clusters |> 
-  filter(PID == "[False, '674eae0026291e33be89b46f', None]") |>
-  arrange(topic_order)
-
-# plot (separate)
-ggplot(data = example, aes(x = scaled_turn_id, y = cluster_label,
-                           color = cluster_label)) +
-  geom_tile() +
-  theme_cowplot() +
-  labs(x = "conversation completion (%)", y = "topic category") +
-  theme(legend.position = "none")
-```
-
-Same example transcript, but all participants who annotated this transcript.
-
-```{r}
-example2 <- transcripts_clusters |>
-  filter(transcript_id == "5c91528b-686c-4446-82dc-5dd830d4d7b1") |>
-  arrange(PID,topic_order)
-
-# plot (separate)
-ggplot(data = example2, aes(x = scaled_turn_id, y = cluster_label,
-                           color = cluster_label)) +
-  facet_wrap(.~PID) +
-  geom_tile() +
-  theme_cowplot() +
-  labs(x = "conversation completion (%)", y = "topic category") +
-  theme(legend.position = "none")
-```
-
-## Topic transition matrix
-
-```{r}
-# create data frame with current/prior topics using cluster labels
-# group by participant and add topic numbers
-cluster_transitions <- transcripts_clusters |>
-  ungroup() |>
-  group_by(PID) |>
-  arrange(scaled_turn_id, .by_group = TRUE) |>
-  select(PID, cluster_label) |>
-  distinct() |>
-  group_by(PID) |>
-  mutate(current_topic_number = 1:n(),
-         current_topic = cluster_label,
-         prior_topic_number = lag(current_topic_number),
-         prior_topic = lag(cluster_label)) |>
-  na.omit()
-
-# count up instances of each transition
-transitions <- cluster_transitions |>
-  group_by(prior_topic, current_topic) |>
-  summarize(transition_count = n())
-```
-
-```{r}
-# check distribution of transition counts
-ggplot(transitions, aes(x = transition_count)) +
-  geom_histogram()
-```
-
-
-### Conditional on prior topic
-
-How likely are you to transition to current topic given prior topic?
-
-```{r}
-# calculate transition probability (out of total sum per prior category)
-transition_matrix <- transitions |>
-  group_by(prior_topic) |>
-  mutate(prior_sum = sum(transition_count)) |>
-  mutate(probability = transition_count/prior_sum)
-
-# plot!
-ggplot(transition_matrix, aes(x = prior_topic, y = current_topic,
-                           fill = probability)) +
-  geom_tile(color = "white") +
-  scale_fill_gradient(low = "white", high = "blue") +
-  labs(title = "Transition Matrix (conditional on prior topic)",
-       x = "Prior Topic", y = "Current Topic", fill = "Probability") +
-  theme_classic() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+  scale_fill_manual(values=met.brewer("Hiroshige", 7)) +
+  labs(x = "Conversation Completion (%)", y = NULL,
+       title = "Coarse Annotator") +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(legend.position = "bottom",
         plot.title = element_text(hjust = 0.5))
-
 ```
+
+```{r}
+# plot
+ggplot() +
+  geom_tile(data = example_granular, aes(x = scaled_turn_id*100, y = 0.5, fill = cluster_label)) +
+  geom_line(data = example_granular, aes(x = scaled_turn_id*100, y = avg_topic_utterance_similarity),
+            linetype = "solid") +
+  geom_line(data = example_granular, aes(x = scaled_turn_id*100, y = avg_topic_cluster_similarity),
+            linetype = "dashed") +
+  geom_line(data = example_granular, aes(x = scaled_turn_id*100, y = avg_cluster_utterance_similarity),
+            linetype = "dotdash", color = "black") +
+  theme_cowplot() +
+  scale_fill_manual(values=met.brewer("Hiroshige", 15)) +
+  labs(x = "Conversation Completion (%)", y = NULL,
+       title = "Granular Annotator") +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(-0.1, 0), limits = c(-0.1,1.2)) +
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# get tiled semantic similarity from this transcript only
+example_tile <- read.csv("./data/output/annotated_transcripts_tile_10_0.csv") |>
+  filter(transcript_id == transcript)
+example_annotation <- read.csv("./data/processed/dense_subset_processed.csv") |>
+  filter(PID == PID_coarse)
+# apply function to see where annotations fall relative to transcript
+example_tile <- detect_window_annotations(example_tile, example_annotation)
+
+# match with cluster labels
+example_cluster <- transcripts_clusters |>
+  filter(PID == PID_coarse) |>
+  select(cluster_label, "annotated_label" = new_topic) |>
+  distinct()
+
+# merge
+example_tile <- merge(example_tile, example_cluster, by = 'annotated_label', all.x = TRUE)
+```
+
+```{r}
+# plot
+ggplot(data = example_tile, aes(x = A_start_turn, y = cosine_similarity)) +
+  geom_line() +
+  geom_vline(data = example_tile[!is.na(example_tile$annotated_label),],
+             aes(xintercept = A_start_turn, color = cluster_label), linetype = "dashed") +
+  theme_void() +
+  theme(legend.position = "none")
+
+# save
+# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/example_cosine_similarity.pdf",
+#        width = 15,
+#        height = 2,
+#        units = "in")
+```
+
+```{r}
+transcripts_clusters |>
+  ungroup() |>
+  dplyr::group_by(cluster_label, group_theme) |>
+  summarize(cluster_count = length(scaled_turn_id)) |>
+  arrange(desc(cluster_count))
+```
+
+
+# -------------------
+*******************************************
+# ARCHIVE
+
+
+
+
+
+
+
+<!-- # 1. Tile Cosine Similarity -->
+
+<!-- Cosine similarity of conversation utterances aggregated over 3 turns sliding forward in the conversation by 1 turn. Data frame created using `2-tile.ipynb` script.  -->
+
+<!-- ```{r} -->
+<!-- # load tile data -->
+<!-- df_tile_10_0 <- read.csv("./data/output/annotated_transcripts_tile_10_0.csv") -->
+<!-- df_tile_15_0 <- read.csv("./data/output/annotated_transcripts_tile_15_0.csv") -->
+<!-- df_tile_20_0 <- read.csv("./data/output/annotated_transcripts_tile_20_0.csv") -->
+<!-- df_tile_10_5 <- read.csv("./data/output/annotated_transcripts_tile_10_5.csv") -->
+<!-- ``` -->
+
+<!-- ## Define annotation matching function & load annotation data -->
+
+<!-- Examine annotation points for all participants and determine if a given tiled window contains the utterance they marked as signifying a topic shift in conversation. If the utterance they selected is within the window, mark it with "yes" and if not, mark it with a "no". Do this for all participants separately. -->
+
+<!-- ```{r} -->
+<!-- # write a function to check if annotation turn ID is within a tiled window of utterances -->
+<!-- detect_window_annotations <- function(tiling_df, annotation_df) { -->
+<!--   # save data frames for output -->
+<!--   annotation_output <- data.frame() -->
+<!--   # select one participant's annotations at a time -->
+<!--   for (a in unique(annotation_df$PID)) { -->
+<!--     # save PID -->
+<!--     this_PID <- a -->
+<!--     # subset annotation DF to just this participant's annotations -->
+<!--     this_annotation <- annotation_df |> filter(PID == a) -->
+<!--     # get corresponding transcript they annotated from tiling DF -->
+<!--     this_transcript_id <- unique(this_annotation$transcript_id) -->
+<!--     this_transcript <- tiling_df |> filter(transcript_id == this_transcript_id) -->
+<!--     # save PID annotation behavior -->
+<!--     behavior <- unique(this_annotation$annotation_behavior) -->
+<!--     # add new variables to this_transcript to hold this participant's annotated turn / label -->
+<!--     this_transcript$annotated_turn <- NA -->
+<!--     this_transcript$annotated_label <- NA -->
+<!--     # create a list of this participant's labeled topics and their turn IDs -->
+<!--     PID_labels <- this_annotation$new_topic -->
+<!--     PID_turns <- this_annotation$turn_id -->
+<!--     # save a version of this_transcript for looping through annotations -->
+<!--     annotations_result <- this_transcript -->
+<!--     # add participant ID and annotation behavior -->
+<!--     annotations_result$PID <- this_PID -->
+<!--     annotations_result$annotation_behavior <- behavior -->
+<!--     # 1a) does the gap turn (i.e., A_turn_end) == topic label turn selected? -->
+<!--     annotations_result$annotated_turn <- ifelse(annotations_result$A_end_turn %in% PID_turns, -->
+<!--                                                 "yes", "no") -->
+<!--     # 1b) if yes, add the label provided by participants -->
+<!--     for (c in 1:length(PID_labels)) { -->
+<!--       annotations_result$annotated_label[annotations_result$A_end_turn == PID_turns[c]] <- PID_labels[c] -->
+<!--     } -->
+<!--     # add to annotation output data frame -->
+<!--     annotation_output <- rbind(annotation_output, annotations_result)  -->
+<!--   } -->
+<!--   return(annotation_output) -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # load annotation data  -->
+<!-- df_ann <- read.csv("./data/processed/dense_subset_processed.csv") |> -->
+<!--   filter(!is.na(PID)) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # mark participants as coarse, middle, or granular annotators based on lower, middle, and upper numbers of annnotations that they provide -->
+
+<!-- # calculate number of annotations per participant -->
+<!-- annotation_numbers <- df_ann |> -->
+<!--   dplyr::group_by(PID) |> -->
+<!--   summarize(total_PID_annotations = length(turn_id)) -->
+<!-- # also create mutated variable in df_ann -->
+<!-- df_ann <- df_ann |> -->
+<!--   dplyr::group_by(PID) |> -->
+<!--   mutate(total_PID_annotations = length(turn_id)) |> -->
+<!--   ungroup() -->
+<!-- # calculate quantiles to split number of PID annotations into three groups -->
+<!-- quantiles <- quantile(annotation_numbers$total_PID_annotations, -->
+<!--                       probs = c(0, 1/3, 2/3, 1)) -->
+<!-- # create new variable in df_ann  -->
+<!-- df_ann$annotation_behavior <- cut(df_ann$total_PID_annotations, breaks = quantiles, -->
+<!--                                   include.lowest = TRUE,  -->
+<!--                                   labels = c("coarse", "middle", "granular")) -->
+
+<!-- # remove data not needed -->
+<!-- rm(annotation_numbers, quantiles) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # merge cluster labels with utterances -->
+
+<!-- ``` -->
+
+
+<!-- ## 10 utterances, 0 gap -->
+<!-- ```{r} -->
+<!-- # apply function -->
+<!-- tile_ann_10_0 <- detect_window_annotations(df_tile_10_0, df_ann) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # calculate distance from the human annotation within the tile data -->
+<!-- ann_dist_10_0 <- tile_ann_10_0 |> -->
+<!--   dplyr::group_by(transcript_id) |> -->
+<!--   mutate(annotation_dist = case_when(annotated_turn == "yes" ~ 0, -->
+<!--                                      lag(annotated_turn, 1) == "yes" ~ 1, -->
+<!--                                      lag(annotated_turn, 2) == "yes" ~ 2, -->
+<!--                                      lag(annotated_turn, 3) == "yes" ~ 3, -->
+<!--                                      lag(annotated_turn, 4) == "yes" ~ 4, -->
+<!--                                      lag(annotated_turn, 5) == "yes" ~ 5, -->
+<!--                                      lag(annotated_turn, 6) == "yes" ~ 6, -->
+<!--                                      lag(annotated_turn, 7) == "yes" ~ 7, -->
+<!--                                      lag(annotated_turn, 8) == "yes" ~ 8, -->
+<!--                                      lag(annotated_turn, 9) == "yes" ~ 9, -->
+<!--                                      lag(annotated_turn, 10) == "yes" ~ 10, -->
+<!--                                      lag(annotated_turn, 11) == "yes" ~ 11, -->
+<!--                                      lag(annotated_turn, 12) == "yes" ~ 12, -->
+<!--                                      lag(annotated_turn, 13) == "yes" ~ 13, -->
+<!--                                      lag(annotated_turn, 14) == "yes" ~ 14, -->
+<!--                                      lag(annotated_turn, 15) == "yes" ~ 15, -->
+<!--                                      lag(annotated_turn, 16) == "yes" ~ 16, -->
+<!--                                      lag(annotated_turn, 17) == "yes" ~ 17, -->
+<!--                                      lag(annotated_turn, 18) == "yes" ~ 18, -->
+<!--                                      lag(annotated_turn, 19) == "yes" ~ 19, -->
+<!--                                      lag(annotated_turn, 20) == "yes" ~ 20, -->
+<!--                                      lag(annotated_turn, 21) == "yes" ~ 21, -->
+<!--                                      lag(annotated_turn, 22) == "yes" ~ 22, -->
+<!--                                      lag(annotated_turn, 23) == "yes" ~ 23, -->
+<!--                                      lag(annotated_turn, 24) == "yes" ~ 24, -->
+<!--                                      lag(annotated_turn, 25) == "yes" ~ 25, -->
+<!--                                      lag(annotated_turn, 26) == "yes" ~ 26, -->
+<!--                                      lag(annotated_turn, 27) == "yes" ~ 27, -->
+<!--                                      lag(annotated_turn, 28) == "yes" ~ 28, -->
+<!--                                      lag(annotated_turn, 29) == "yes" ~ 29, -->
+<!--                                      lead(annotated_turn, 1) == "yes" ~ -1, -->
+<!--                                      lead(annotated_turn, 2) == "yes" ~ -2, -->
+<!--                                      lead(annotated_turn, 3) == "yes" ~ -3, -->
+<!--                                      lead(annotated_turn, 4) == "yes" ~ -4, -->
+<!--                                      lead(annotated_turn, 5) == "yes" ~ -5, -->
+<!--                                      lead(annotated_turn, 6) == "yes" ~ -6, -->
+<!--                                      lead(annotated_turn, 7) == "yes" ~ -7, -->
+<!--                                      lead(annotated_turn, 8) == "yes" ~ -8, -->
+<!--                                      lead(annotated_turn, 9) == "yes" ~ -9, -->
+<!--                                      lead(annotated_turn, 10) == "yes" ~ -10, -->
+<!--                                      lead(annotated_turn, 11) == "yes" ~ -11, -->
+<!--                                      lead(annotated_turn, 12) == "yes" ~ -12, -->
+<!--                                      lead(annotated_turn, 13) == "yes" ~ -13, -->
+<!--                                      lead(annotated_turn, 14) == "yes" ~ -14, -->
+<!--                                      lead(annotated_turn, 15) == "yes" ~ -15, -->
+<!--                                      lead(annotated_turn, 16) == "yes" ~ -16, -->
+<!--                                      lead(annotated_turn, 17) == "yes" ~ -17, -->
+<!--                                      lead(annotated_turn, 18) == "yes" ~ -18, -->
+<!--                                      lead(annotated_turn, 19) == "yes" ~ -19, -->
+<!--                                      lead(annotated_turn, 20) == "yes" ~ -20, -->
+<!--                                      lead(annotated_turn, 21) == "yes" ~ -21, -->
+<!--                                      lead(annotated_turn, 22) == "yes" ~ -22, -->
+<!--                                      lead(annotated_turn, 23) == "yes" ~ -23, -->
+<!--                                      lead(annotated_turn, 24) == "yes" ~ -24, -->
+<!--                                      lead(annotated_turn, 25) == "yes" ~ -25, -->
+<!--                                      lead(annotated_turn, 26) == "yes" ~ -26, -->
+<!--                                      lead(annotated_turn, 27) == "yes" ~ -27, -->
+<!--                                      lead(annotated_turn, 28) == "yes" ~ -28, -->
+<!--                                      lead(annotated_turn, 29) == "yes" ~ -29, -->
+<!--                                      .default = NA)) |> -->
+<!--   select(transcript_id, annotation_dist, cosine_similarity, PID, annotation_behavior) |> -->
+<!--   na.omit() -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # get summary for annotation distance -->
+<!-- dist_summary_10_0 <- summarySE(ann_dist_10_0, measurevar = "cosine_similarity",  -->
+<!--                                groupvars = c("annotation_dist", "annotation_behavior")) -->
+<!-- # only include -15 to 15 -->
+<!-- dist_subset_10_0 <- dist_summary_10_0 |> -->
+<!--   filter(annotation_dist >= -15 & annotation_dist <= 15) -->
+
+<!-- # plot -->
+<!-- plot10 <- ggplot(data = dist_subset_10_0, aes(x = annotation_dist, y = cosine_similarity, -->
+<!--                                      color = annotation_behavior, fill = annotation_behavior)) + -->
+<!--   geom_vline(aes(xintercept = 0), color = "grey", linetype = "dashed") + -->
+<!--   geom_point(alpha = 0) + -->
+<!--   geom_line(linewidth = 2) + -->
+<!--   geom_ribbon(aes(ymin = cosine_similarity - se, ymax = cosine_similarity + se),  -->
+<!--               alpha = 0.25, color = NA) + -->
+<!--   labs(x = "Turn Distance from Annotation", y = "Cosine Similarity", -->
+<!--        title = "10 Adjacent Utterances") + -->
+<!--   scale_color_manual(values = c("#e96052", "#ffd16d", "#4f8dae")) + -->
+<!--   scale_fill_manual(values = c("#e96052", "#ffd16d", "#4f8dae")) + -->
+<!--   scale_y_continuous(breaks = scales::pretty_breaks(n = 4)) + -->
+<!--   scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + -->
+<!--   theme_cowplot() + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+
+<!-- # show -->
+<!-- plot10 -->
+
+<!-- ``` -->
+
+<!-- ### example -->
+<!-- ```{r} -->
+<!-- # look at conversation with 10 annotators (dense subset) -->
+<!-- df_tile_10_example <- tile_ann_10_0 |> -->
+<!--   filter(transcript_id == "0736fa95-99e8-4707-bd64-4552eb79d05a") -->
+
+<!-- ggplot(data = df_tile_10_example, aes(x = A_start_turn, y = cosine_similarity)) + -->
+<!--   facet_wrap(.~PID, nrow = 2) + -->
+<!--   geom_line() + -->
+<!--   geom_vline(data = df_tile_10_example[!is.na(df_tile_10_example$annotated_label),], -->
+<!--              aes(xintercept = A_start_turn, color = annotation_behavior), linetype = "dashed") + -->
+<!--   scale_color_manual(values = met.brewer("Archambault", 3)) + -->
+<!--   theme_void() + -->
+<!--   theme(legend.position = "bottom") -->
+<!-- ``` -->
+
+<!-- ## 10 utterances, 5 gap -->
+<!-- ```{r} -->
+<!-- # apply function -->
+<!-- tile_ann_10_5 <- detect_window_annotations(df_tile_10_5, df_ann) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # calculate distance from the human annotation within the tile data -->
+<!-- ann_dist_10_5 <- tile_ann_10_5 |> -->
+<!--   dplyr::group_by(transcript_id) |> -->
+<!--   mutate(annotation_dist = case_when(annotated_turn == "yes" ~ 0, -->
+<!--                                      lag(annotated_turn, 1) == "yes" ~ 1, -->
+<!--                                      lag(annotated_turn, 2) == "yes" ~ 2, -->
+<!--                                      lag(annotated_turn, 3) == "yes" ~ 3, -->
+<!--                                      lag(annotated_turn, 4) == "yes" ~ 4, -->
+<!--                                      lag(annotated_turn, 5) == "yes" ~ 5, -->
+<!--                                      lag(annotated_turn, 6) == "yes" ~ 6, -->
+<!--                                      lag(annotated_turn, 7) == "yes" ~ 7, -->
+<!--                                      lag(annotated_turn, 8) == "yes" ~ 8, -->
+<!--                                      lag(annotated_turn, 9) == "yes" ~ 9, -->
+<!--                                      lag(annotated_turn, 10) == "yes" ~ 10, -->
+<!--                                      lag(annotated_turn, 11) == "yes" ~ 11, -->
+<!--                                      lag(annotated_turn, 12) == "yes" ~ 12, -->
+<!--                                      lag(annotated_turn, 13) == "yes" ~ 13, -->
+<!--                                      lag(annotated_turn, 14) == "yes" ~ 14, -->
+<!--                                      lag(annotated_turn, 15) == "yes" ~ 15, -->
+<!--                                      lag(annotated_turn, 16) == "yes" ~ 16, -->
+<!--                                      lag(annotated_turn, 17) == "yes" ~ 17, -->
+<!--                                      lag(annotated_turn, 18) == "yes" ~ 18, -->
+<!--                                      lag(annotated_turn, 19) == "yes" ~ 19, -->
+<!--                                      lag(annotated_turn, 20) == "yes" ~ 20, -->
+<!--                                      lag(annotated_turn, 21) == "yes" ~ 21, -->
+<!--                                      lag(annotated_turn, 22) == "yes" ~ 22, -->
+<!--                                      lag(annotated_turn, 23) == "yes" ~ 23, -->
+<!--                                      lag(annotated_turn, 24) == "yes" ~ 24, -->
+<!--                                      lag(annotated_turn, 25) == "yes" ~ 25, -->
+<!--                                      lag(annotated_turn, 26) == "yes" ~ 26, -->
+<!--                                      lag(annotated_turn, 27) == "yes" ~ 27, -->
+<!--                                      lag(annotated_turn, 28) == "yes" ~ 28, -->
+<!--                                      lag(annotated_turn, 29) == "yes" ~ 29, -->
+<!--                                      lead(annotated_turn, 1) == "yes" ~ -1, -->
+<!--                                      lead(annotated_turn, 2) == "yes" ~ -2, -->
+<!--                                      lead(annotated_turn, 3) == "yes" ~ -3, -->
+<!--                                      lead(annotated_turn, 4) == "yes" ~ -4, -->
+<!--                                      lead(annotated_turn, 5) == "yes" ~ -5, -->
+<!--                                      lead(annotated_turn, 6) == "yes" ~ -6, -->
+<!--                                      lead(annotated_turn, 7) == "yes" ~ -7, -->
+<!--                                      lead(annotated_turn, 8) == "yes" ~ -8, -->
+<!--                                      lead(annotated_turn, 9) == "yes" ~ -9, -->
+<!--                                      lead(annotated_turn, 10) == "yes" ~ -10, -->
+<!--                                      lead(annotated_turn, 11) == "yes" ~ -11, -->
+<!--                                      lead(annotated_turn, 12) == "yes" ~ -12, -->
+<!--                                      lead(annotated_turn, 13) == "yes" ~ -13, -->
+<!--                                      lead(annotated_turn, 14) == "yes" ~ -14, -->
+<!--                                      lead(annotated_turn, 15) == "yes" ~ -15, -->
+<!--                                      lead(annotated_turn, 16) == "yes" ~ -16, -->
+<!--                                      lead(annotated_turn, 17) == "yes" ~ -17, -->
+<!--                                      lead(annotated_turn, 18) == "yes" ~ -18, -->
+<!--                                      lead(annotated_turn, 19) == "yes" ~ -19, -->
+<!--                                      lead(annotated_turn, 20) == "yes" ~ -20, -->
+<!--                                      lead(annotated_turn, 21) == "yes" ~ -21, -->
+<!--                                      lead(annotated_turn, 22) == "yes" ~ -22, -->
+<!--                                      lead(annotated_turn, 23) == "yes" ~ -23, -->
+<!--                                      lead(annotated_turn, 24) == "yes" ~ -24, -->
+<!--                                      lead(annotated_turn, 25) == "yes" ~ -25, -->
+<!--                                      lead(annotated_turn, 26) == "yes" ~ -26, -->
+<!--                                      lead(annotated_turn, 27) == "yes" ~ -27, -->
+<!--                                      lead(annotated_turn, 28) == "yes" ~ -28, -->
+<!--                                      lead(annotated_turn, 29) == "yes" ~ -29, -->
+<!--                                      .default = NA)) |> -->
+<!--   select(transcript_id, annotation_dist, cosine_similarity, PID, annotation_behavior) |> -->
+<!--   na.omit() -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # get summary for annotation distance -->
+<!-- dist_summary_10_5 <- summarySE(ann_dist_10_5, measurevar = "cosine_similarity",  -->
+<!--                                groupvars = c("annotation_dist", "annotation_behavior")) -->
+
+<!-- # plot -->
+<!-- plot10_5 <- ggplot(data = dist_summary_10_5, aes(x = annotation_dist, y = cosine_similarity, -->
+<!--                                      color = annotation_behavior, fill = annotation_behavior)) + -->
+<!--   geom_vline(aes(xintercept = 0), color = "grey", linetype = "dashed") + -->
+<!--   geom_point(alpha = 0) + -->
+<!--   geom_line(linewidth = 2) + -->
+<!--   geom_ribbon(aes(ymin = cosine_similarity - se, ymax = cosine_similarity + se),  -->
+<!--               alpha = 0.25, color = NA) + -->
+<!--   labs(x = "Turn Distance from Annotation", y = "Cosine Similarity", -->
+<!--        title = "10 utterances, 5 gap") + -->
+<!--   scale_color_manual(values = c("#e96052", "#ffd16d", "#4f8dae")) + -->
+<!--   scale_fill_manual(values = c("#e96052", "#ffd16d", "#4f8dae")) + -->
+<!--   scale_y_continuous(breaks = scales::pretty_breaks(n = 4)) + -->
+<!--                      #limits = c(0.34, 0.375)) + -->
+<!--   theme_cowplot() + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+
+<!-- # show -->
+<!-- plot10_5 -->
+
+<!-- ``` -->
+
+<!-- ## 15 utterances, 0 gap -->
+<!-- ```{r} -->
+<!-- # apply function -->
+<!-- tile_ann_15_0 <- detect_window_annotations(df_tile_15_0, df_ann) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # calculate distance from the human annotation within the tile data -->
+<!-- ann_dist_15_0 <- tile_ann_15_0 |> -->
+<!--   dplyr::group_by(transcript_id) |> -->
+<!--   mutate(annotation_dist = case_when(annotated_turn == "yes" ~ 0, -->
+<!--                                      lag(annotated_turn, 1) == "yes" ~ 1, -->
+<!--                                      lag(annotated_turn, 2) == "yes" ~ 2, -->
+<!--                                      lag(annotated_turn, 3) == "yes" ~ 3, -->
+<!--                                      lag(annotated_turn, 4) == "yes" ~ 4, -->
+<!--                                      lag(annotated_turn, 5) == "yes" ~ 5, -->
+<!--                                      lag(annotated_turn, 6) == "yes" ~ 6, -->
+<!--                                      lag(annotated_turn, 7) == "yes" ~ 7, -->
+<!--                                      lag(annotated_turn, 8) == "yes" ~ 8, -->
+<!--                                      lag(annotated_turn, 9) == "yes" ~ 9, -->
+<!--                                      lag(annotated_turn, 10) == "yes" ~ 10, -->
+<!--                                      lag(annotated_turn, 11) == "yes" ~ 11, -->
+<!--                                      lag(annotated_turn, 12) == "yes" ~ 12, -->
+<!--                                      lag(annotated_turn, 13) == "yes" ~ 13, -->
+<!--                                      lag(annotated_turn, 14) == "yes" ~ 14, -->
+<!--                                      lag(annotated_turn, 15) == "yes" ~ 15, -->
+<!--                                      lag(annotated_turn, 16) == "yes" ~ 16, -->
+<!--                                      lag(annotated_turn, 17) == "yes" ~ 17, -->
+<!--                                      lag(annotated_turn, 18) == "yes" ~ 18, -->
+<!--                                      lag(annotated_turn, 19) == "yes" ~ 19, -->
+<!--                                      lag(annotated_turn, 20) == "yes" ~ 20, -->
+<!--                                      lag(annotated_turn, 21) == "yes" ~ 21, -->
+<!--                                      lag(annotated_turn, 22) == "yes" ~ 22, -->
+<!--                                      lag(annotated_turn, 23) == "yes" ~ 23, -->
+<!--                                      lag(annotated_turn, 24) == "yes" ~ 24, -->
+<!--                                      lag(annotated_turn, 25) == "yes" ~ 25, -->
+<!--                                      lag(annotated_turn, 26) == "yes" ~ 26, -->
+<!--                                      lag(annotated_turn, 27) == "yes" ~ 27, -->
+<!--                                      lag(annotated_turn, 28) == "yes" ~ 28, -->
+<!--                                      lag(annotated_turn, 29) == "yes" ~ 29, -->
+<!--                                      lead(annotated_turn, 1) == "yes" ~ -1, -->
+<!--                                      lead(annotated_turn, 2) == "yes" ~ -2, -->
+<!--                                      lead(annotated_turn, 3) == "yes" ~ -3, -->
+<!--                                      lead(annotated_turn, 4) == "yes" ~ -4, -->
+<!--                                      lead(annotated_turn, 5) == "yes" ~ -5, -->
+<!--                                      lead(annotated_turn, 6) == "yes" ~ -6, -->
+<!--                                      lead(annotated_turn, 7) == "yes" ~ -7, -->
+<!--                                      lead(annotated_turn, 8) == "yes" ~ -8, -->
+<!--                                      lead(annotated_turn, 9) == "yes" ~ -9, -->
+<!--                                      lead(annotated_turn, 10) == "yes" ~ -10, -->
+<!--                                      lead(annotated_turn, 11) == "yes" ~ -11, -->
+<!--                                      lead(annotated_turn, 12) == "yes" ~ -12, -->
+<!--                                      lead(annotated_turn, 13) == "yes" ~ -13, -->
+<!--                                      lead(annotated_turn, 14) == "yes" ~ -14, -->
+<!--                                      lead(annotated_turn, 15) == "yes" ~ -15, -->
+<!--                                      lead(annotated_turn, 16) == "yes" ~ -16, -->
+<!--                                      lead(annotated_turn, 17) == "yes" ~ -17, -->
+<!--                                      lead(annotated_turn, 18) == "yes" ~ -18, -->
+<!--                                      lead(annotated_turn, 19) == "yes" ~ -19, -->
+<!--                                      lead(annotated_turn, 20) == "yes" ~ -20, -->
+<!--                                      lead(annotated_turn, 21) == "yes" ~ -21, -->
+<!--                                      lead(annotated_turn, 22) == "yes" ~ -22, -->
+<!--                                      lead(annotated_turn, 23) == "yes" ~ -23, -->
+<!--                                      lead(annotated_turn, 24) == "yes" ~ -24, -->
+<!--                                      lead(annotated_turn, 25) == "yes" ~ -25, -->
+<!--                                      lead(annotated_turn, 26) == "yes" ~ -26, -->
+<!--                                      lead(annotated_turn, 27) == "yes" ~ -27, -->
+<!--                                      lead(annotated_turn, 28) == "yes" ~ -28, -->
+<!--                                      lead(annotated_turn, 29) == "yes" ~ -29, -->
+<!--                                      .default = NA)) |> -->
+<!--   select(transcript_id, annotation_dist, cosine_similarity, PID, annotation_behavior) |> -->
+<!--   na.omit() -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # get summary for annotation distance -->
+<!-- dist_summary_15_0 <- summarySE(ann_dist_15_0, measurevar = "cosine_similarity",  -->
+<!--                                groupvars = c("annotation_dist", "annotation_behavior")) -->
+<!-- # only include -15 to 15 -->
+<!-- dist_subset_15_0 <- dist_summary_15_0 |> -->
+<!--   filter(annotation_dist >= -15 & annotation_dist <= 15) -->
+
+<!-- # plot -->
+<!-- plot15 <- ggplot(data = dist_subset_15_0, aes(x = annotation_dist, y = cosine_similarity, -->
+<!--                                      color = annotation_behavior, fill = annotation_behavior)) + -->
+<!--   geom_vline(aes(xintercept = 0), color = "grey", linetype = "dashed") + -->
+<!--   geom_point(alpha = 0) + -->
+<!--   geom_line(linewidth = 2) + -->
+<!--   geom_ribbon(aes(ymin = cosine_similarity - se, ymax = cosine_similarity + se),  -->
+<!--               alpha = 0.25, color = NA) + -->
+<!--   labs(x = "Turn Distance from Annotation", y = "Cosine Similarity", -->
+<!--        title = "15 Adjacent Utterances") + -->
+<!--   scale_color_manual(values = c("#e96052", "#ffd16d", "#4f8dae")) + -->
+<!--   scale_fill_manual(values = c("#e96052", "#ffd16d", "#4f8dae")) + -->
+<!--   scale_y_continuous(breaks = scales::pretty_breaks(n = 4)) + -->
+<!--   scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + -->
+<!--   theme_cowplot() + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+
+<!-- # show -->
+<!-- plot15 -->
+<!-- ``` -->
+
+<!-- ## 20 utterances, 0 gap -->
+<!-- ```{r} -->
+<!-- # apply function -->
+<!-- tile_ann_20_0 <- detect_window_annotations(df_tile_20_0, df_ann) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # calculate distance from the human annotation within the tile data -->
+<!-- ann_dist_20_0 <- tile_ann_20_0 |> -->
+<!--   dplyr::group_by(transcript_id) |> -->
+<!--   mutate(annotation_dist = case_when(annotated_turn == "yes" ~ 0, -->
+<!--                                      lag(annotated_turn, 1) == "yes" ~ 1, -->
+<!--                                      lag(annotated_turn, 2) == "yes" ~ 2, -->
+<!--                                      lag(annotated_turn, 3) == "yes" ~ 3, -->
+<!--                                      lag(annotated_turn, 4) == "yes" ~ 4, -->
+<!--                                      lag(annotated_turn, 5) == "yes" ~ 5, -->
+<!--                                      lag(annotated_turn, 6) == "yes" ~ 6, -->
+<!--                                      lag(annotated_turn, 7) == "yes" ~ 7, -->
+<!--                                      lag(annotated_turn, 8) == "yes" ~ 8, -->
+<!--                                      lag(annotated_turn, 9) == "yes" ~ 9, -->
+<!--                                      lag(annotated_turn, 10) == "yes" ~ 10, -->
+<!--                                      lag(annotated_turn, 11) == "yes" ~ 11, -->
+<!--                                      lag(annotated_turn, 12) == "yes" ~ 12, -->
+<!--                                      lag(annotated_turn, 13) == "yes" ~ 13, -->
+<!--                                      lag(annotated_turn, 14) == "yes" ~ 14, -->
+<!--                                      lag(annotated_turn, 15) == "yes" ~ 15, -->
+<!--                                      lag(annotated_turn, 16) == "yes" ~ 16, -->
+<!--                                      lag(annotated_turn, 17) == "yes" ~ 17, -->
+<!--                                      lag(annotated_turn, 18) == "yes" ~ 18, -->
+<!--                                      lag(annotated_turn, 19) == "yes" ~ 19, -->
+<!--                                      lag(annotated_turn, 20) == "yes" ~ 20, -->
+<!--                                      lag(annotated_turn, 21) == "yes" ~ 21, -->
+<!--                                      lag(annotated_turn, 22) == "yes" ~ 22, -->
+<!--                                      lag(annotated_turn, 23) == "yes" ~ 23, -->
+<!--                                      lag(annotated_turn, 24) == "yes" ~ 24, -->
+<!--                                      lag(annotated_turn, 25) == "yes" ~ 25, -->
+<!--                                      lag(annotated_turn, 26) == "yes" ~ 26, -->
+<!--                                      lag(annotated_turn, 27) == "yes" ~ 27, -->
+<!--                                      lag(annotated_turn, 28) == "yes" ~ 28, -->
+<!--                                      lag(annotated_turn, 29) == "yes" ~ 29, -->
+<!--                                      lead(annotated_turn, 1) == "yes" ~ -1, -->
+<!--                                      lead(annotated_turn, 2) == "yes" ~ -2, -->
+<!--                                      lead(annotated_turn, 3) == "yes" ~ -3, -->
+<!--                                      lead(annotated_turn, 4) == "yes" ~ -4, -->
+<!--                                      lead(annotated_turn, 5) == "yes" ~ -5, -->
+<!--                                      lead(annotated_turn, 6) == "yes" ~ -6, -->
+<!--                                      lead(annotated_turn, 7) == "yes" ~ -7, -->
+<!--                                      lead(annotated_turn, 8) == "yes" ~ -8, -->
+<!--                                      lead(annotated_turn, 9) == "yes" ~ -9, -->
+<!--                                      lead(annotated_turn, 10) == "yes" ~ -10, -->
+<!--                                      lead(annotated_turn, 11) == "yes" ~ -11, -->
+<!--                                      lead(annotated_turn, 12) == "yes" ~ -12, -->
+<!--                                      lead(annotated_turn, 13) == "yes" ~ -13, -->
+<!--                                      lead(annotated_turn, 14) == "yes" ~ -14, -->
+<!--                                      lead(annotated_turn, 15) == "yes" ~ -15, -->
+<!--                                      lead(annotated_turn, 16) == "yes" ~ -16, -->
+<!--                                      lead(annotated_turn, 17) == "yes" ~ -17, -->
+<!--                                      lead(annotated_turn, 18) == "yes" ~ -18, -->
+<!--                                      lead(annotated_turn, 19) == "yes" ~ -19, -->
+<!--                                      lead(annotated_turn, 20) == "yes" ~ -20, -->
+<!--                                      lead(annotated_turn, 21) == "yes" ~ -21, -->
+<!--                                      lead(annotated_turn, 22) == "yes" ~ -22, -->
+<!--                                      lead(annotated_turn, 23) == "yes" ~ -23, -->
+<!--                                      lead(annotated_turn, 24) == "yes" ~ -24, -->
+<!--                                      lead(annotated_turn, 25) == "yes" ~ -25, -->
+<!--                                      lead(annotated_turn, 26) == "yes" ~ -26, -->
+<!--                                      lead(annotated_turn, 27) == "yes" ~ -27, -->
+<!--                                      lead(annotated_turn, 28) == "yes" ~ -28, -->
+<!--                                      lead(annotated_turn, 29) == "yes" ~ -29, -->
+<!--                                      .default = NA)) |> -->
+<!--   select(transcript_id, annotation_dist, cosine_similarity, PID, annotation_behavior) |> -->
+<!--   na.omit() -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # get summary for annotation distance -->
+<!-- dist_summary_20_0 <- summarySE(ann_dist_20_0, measurevar = "cosine_similarity",  -->
+<!--                                groupvars = c("annotation_dist", "annotation_behavior")) -->
+<!-- # only include -15 to 15 -->
+<!-- dist_subset_20_0 <- dist_summary_20_0 |> -->
+<!--   filter(annotation_dist >= -15 & annotation_dist <= 15) -->
+
+<!-- # plot -->
+<!-- plot20 <- ggplot(data = dist_subset_20_0, aes(x = annotation_dist, y = cosine_similarity, -->
+<!--                                      color = annotation_behavior, fill = annotation_behavior)) + -->
+<!--   geom_vline(aes(xintercept = 0), color = "grey", linetype = "dashed") + -->
+<!--   geom_point(alpha = 0) + -->
+<!--   geom_line(linewidth = 2) + -->
+<!--   geom_ribbon(aes(ymin = cosine_similarity - se, ymax = cosine_similarity + se),  -->
+<!--               alpha = 0.25, color = NA) + -->
+<!--   labs(x = "Turn Distance from Annotation", y = "Cosine Similarity", -->
+<!--        title = "20 Adjacent Utterances") + -->
+<!--   scale_color_manual(values = c("#e96052", "#ffd16d", "#4f8dae")) + -->
+<!--   scale_fill_manual(values = c("#e96052", "#ffd16d", "#4f8dae")) + -->
+<!--   scale_y_continuous(breaks = scales::pretty_breaks(n = 4)) + -->
+<!--   scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + -->
+<!--   theme_cowplot() + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+
+<!-- # show -->
+<!-- plot20 -->
+
+<!-- ``` -->
+
+<!-- ## PLOT -->
+<!-- ```{r} -->
+<!-- # create faceted image -->
+<!-- combined <- plot10 + plot15 + plot20 + -->
+<!--   plot_layout(widths = c(1,1,1), guides = "collect") + -->
+<!--   plot_annotation(tag_levels = "A") & -->
+<!--   theme(plot.tag = element_text(size = 20, face = "bold", family = "sans")) -->
+
+<!-- # save combined figure -->
+<!-- ggsave(plot = combined, -->
+<!--        filename = "./cogsci/figures/tile-combined.pdf", -->
+<!--        dpi = 300, -->
+<!--        units = "in", -->
+<!--        width = 16, -->
+<!--        heigh = 6) -->
+
+<!-- ggsave(plot = combined, -->
+<!--        filename = "./cogsci/figures/tile-combined.png", -->
+<!--        dpi = 300, -->
+<!--        units = "in", -->
+<!--        width = 16, -->
+<!--        heigh = 6) -->
+
+<!-- # show combined figure -->
+<!-- combined -->
+<!-- ``` -->
+
+
+<!-- *** -->
+
+<!-- # 2. TSNE -->
+
+<!-- Do cluster labels appropriately cluster topic labels provided by participants? -->
+
+<!-- ```{r} -->
+<!-- # load tsne values for HS-provided cluster labels and participant-provided topic labels -->
+<!-- tsne_50 <- read.csv("./data/output/tsne_50.csv") -->
+
+<!-- # subset to just participant and clustered types -->
+<!-- tsne_cluster_50 <- tsne_50 |> filter(type == "cluster") -->
+<!-- tsne_participant_50 <- tsne_50 |> filter(type == "participant") -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # plot cluster labels -->
+<!-- ggplot() + -->
+<!--   geom_text(data = tsne_cluster_50, aes(x = tsne_1, y = tsne_2, color = as.factor(clusters), label = topic)) + -->
+<!--   geom_point(data = tsne_cluster_50, aes(x = tsne_1, y = tsne_2, color = as.factor(clusters)), size = 3) + -->
+<!--   geom_point(data = tsne_participant_50, aes(x = tsne_1, y = tsne_2, color = as.factor(clusters)),  -->
+<!--              alpha = 0.005) + -->
+<!--   labs(title = "50 clusters") + -->
+<!--   theme_void() + -->
+<!--   scale_color_manual(values=met.brewer("Hiroshige", 50)) + -->
+<!--   theme(legend.position = "none", -->
+<!--         plot.title = element_text(hjust = 0.5)) -->
+<!-- ``` -->
+
+<!-- *** -->
+
+<!-- # 3. Topic lengths & transitions -->
+
+
+
+<!-- ## Topic transition matrix -->
+<!-- ### 10 high level cluster groups -->
+
+<!-- Conditional on prior topic -->
+
+<!-- ```{r} -->
+<!-- # tag 50 clusters with the 10 cluster groups to give better insight into transitions -->
+<!-- transition_groups_10 <- transcripts_clusters_50 |> -->
+<!--   mutate(group = case_when( -->
+<!--     # social interactions -->
+<!--     cluster_label == "discussion, questions" ~ "social interactions", -->
+<!--     cluster_label == "goodbye" ~ "social interactions", -->
+<!--     cluster_label == "introduction" ~ "social interactions", -->
+<!--     cluster_label == "greeting" ~ "social interactions", -->
+<!--     cluster_label == "saying goodbye, farewell" ~ "social interactions", -->
+<!--     # work and career -->
+<!--     cluster_label == "work" ~ "work and career", -->
+<!--     cluster_label == "work, profession, career" ~ "work and career", -->
+<!--     cluster_label == "past experiences" ~ "work and career", -->
+<!--     cluster_label == "location, city, country" ~ "work and career", -->
+<!--     cluster_label == "future plans" ~ "work and career", -->
+<!--     # health and covid -->
+<!--     cluster_label == "vaccine, health, sickness" ~ "COVID-19", -->
+<!--     cluster_label == "covid" ~ "COVID-19", -->
+<!--     cluster_label == "quarantine" ~ "COVID-19", -->
+<!--     cluster_label == "pandemic" ~ "COVID-19", -->
+<!--     cluster_label == "lockdown" ~ "COVID-19", -->
+<!--     # education -->
+<!--     cluster_label == "school" ~ "education", -->
+<!--     cluster_label == "college, university, degree, major" ~ "education", -->
+<!--     cluster_label == "teaching, classes, learning" ~ "education", -->
+<!--     cluster_label == "technology, virtual reality, social media, internet" ~ "education", -->
+<!--     cluster_label == "technical difficulty, audio issues" ~ "education", -->
+<!--     # family and relationships -->
+<!--     cluster_label == "parent, sibling" ~ "relationships", -->
+<!--     cluster_label == "family" ~ "relationships", -->
+<!--     cluster_label == "relationships, dating, marriage" ~ "relationships", -->
+<!--     cluster_label == "children, kids, childhood" ~ "relationships", -->
+<!--     cluster_label == "people, names" ~ "relationships", -->
+<!--     # money -->
+<!--     cluster_label == "job, money, business" ~ "money", -->
+<!--     cluster_label == "prices, costs, taxes, economy, finance" ~ "money", -->
+<!--     cluster_label == "politics, election, voting, protests" ~ "money", -->
+<!--     cluster_label == "decor, toys, items, masks" ~ "money", -->
+<!--     cluster_label == "food, drink" ~ "money", -->
+<!--     # research -->
+<!--     cluster_label == "research, studies, experiment" ~ "research", -->
+<!--     cluster_label == "surveys" ~ "research", -->
+<!--     cluster_label == "prolific" ~ "research", -->
+<!--     cluster_label == "starting the call" ~ "research", -->
+<!--     cluster_label == "ending the call" ~ "research", -->
+<!--     # lifestyle -->
+<!--     cluster_label == "time" ~ "lifestyle", -->
+<!--     cluster_label == "lifestyle, social life, living situation" ~ "lifestyle", -->
+<!--     cluster_label == "age" ~ "lifestyle", -->
+<!--     cluster_label == "housing, home, hometown, residence" ~ "lifestyle", -->
+<!--     cluster_label == "travel, vacation, tourism" ~ "lifestyle", -->
+<!--     # preferences -->
+<!--     cluster_label == "hobbies, activities" ~ "preferences", -->
+<!--     cluster_label == "mood, feelings, current events" ~ "preferences", -->
+<!--     cluster_label == "weather" ~ "preferences", -->
+<!--     cluster_label == "climate, natural distasters, environment" ~ "preferences", -->
+<!--     cluster_label == "animals, pets" ~ "preferences", -->
+<!--     # entertainment -->
+<!--     cluster_label == "sports, exercise" ~ "entertainment", -->
+<!--     cluster_label == "music, instruments" ~ "entertainment", -->
+<!--     cluster_label == "language, books, news, reading, writing" ~ "entertainment", -->
+<!--     cluster_label == "television, podcasts, shows" ~ "entertainment", -->
+<!--     cluster_label == "movies, video games" ~ "entertainment" -->
+<!--   )) -->
+
+<!-- # get probabilities of transitions between groups -->
+<!-- transition_matrix_10 <- transition_groups_10 |> -->
+<!--   ungroup() |> -->
+<!--   group_by(PID) |> -->
+<!--   arrange(turn_100_scaled, .by_group = TRUE) |> -->
+<!--   select(PID, group) |> -->
+<!--   distinct() |> -->
+<!--   group_by(PID) |> -->
+<!--   mutate(current_topic_number = 1:n(), -->
+<!--          current_topic = group, -->
+<!--          prior_topic_number = lag(current_topic_number), -->
+<!--          prior_topic = lag(group)) |> -->
+<!--   na.omit() -->
+
+<!-- # calculate transition probability (out of total sum per prior category) -->
+<!-- transition_matrix_10 <- transition_matrix_10 |> -->
+<!--   group_by(prior_topic, current_topic) |> -->
+<!--   summarize(transition_count = n()) |> -->
+<!--   ungroup() |> -->
+<!--   group_by(prior_topic) |> -->
+<!--   mutate(prior_sum = sum(transition_count)) |> -->
+<!--   mutate(probability = transition_count/prior_sum) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # highlight the highest probability of transitioning to current topic from each prior topic -->
+<!-- top_prob <- transition_matrix_10 |> -->
+<!--   group_by(prior_topic) |> -->
+<!--   mutate(highlight = probability == max(probability)) |> -->
+<!--   ungroup() -->
+
+<!-- # plot! -->
+<!-- ggplot(transition_matrix_10, aes(x = prior_topic, y = current_topic, -->
+<!--                            fill = probability)) + -->
+<!--   geom_tile(color = "white") + # gradient fill -->
+<!--   geom_tile(data = subset(top_prob, highlight),  -->
+<!--             aes(x = prior_topic, y = current_topic, -->
+<!--                 fill = probability), -->
+<!--             color = "black", linewidth = 0.5) + # outline highlight -->
+<!--   geom_text(data = subset(top_prob, highlight),  -->
+<!--             aes(x = prior_topic, y = current_topic, label = round(probability, digits = 2))) + -->
+<!--   labs(title = "Transition Matrix - 10 Cluster Groups", -->
+<!--        x = "Prior Topic", y = "Current Topic", fill = "Probability") + -->
+<!--   theme_cowplot() + -->
+<!--   theme(axis.text.x = element_text(angle = 45, hjust = 1), -->
+<!--         plot.title = element_text(hjust = 0.5)) + -->
+<!--   scale_fill_gradientn(colors = c("white", "#e96052")) -->
+
+<!-- # save -->
+<!-- ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/transition_matrix.pdf", -->
+<!--        width = 7, -->
+<!--        height = 5, -->
+<!--        units = "in") -->
+
+<!-- ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/transition_matrix.png", -->
+<!--        width = 7, -->
+<!--        height = 5, -->
+<!--        units = "in") -->
+<!-- ``` -->
+
+<!-- ### Directed Arrow Graph -->
+
+<!-- make a directed arrow diagram of topic transitions in which the arrow weights are transition probabilities -->
+
+<!-- ```{r} -->
+<!-- # thx chatgpt for help making this first pass -->
+<!-- # make an edges data frame (edge list) -->
+<!-- edges_10 <- transition_matrix_10 |> -->
+<!--   select(from = prior_topic, to = current_topic, probability) |> -->
+<!--   # define prior_topic levels -->
+<!--   # mutate(from = factor(from, levels = c("social interactions", "work and career", -->
+<!--   #                                       "COVID-19", "education", "relationships", -->
+<!--   #                                       "money", "research", "lifestyle", -->
+<!--   #                                       "preferences", "entertainment"), ordered = TRUE)) |> -->
+<!--   distinct() -->
+<!-- # make a graph object form the edge list -->
+<!-- graph_10 <- as_tbl_graph(edges_10, directed = TRUE) -->
+<!-- # add topic base rate as node attribute to graph -->
+<!-- V(graph_10)$prior_sum <- transition_matrix_10 |> -->
+<!--   select(prior_topic, prior_sum) |> -->
+<!--   distinct() |> -->
+<!--   pull(prior_sum) -->
+<!-- # create scaled version of probability for visualization -->
+<!-- E(graph_10)$weight <- transition_matrix_10$probability -->
+<!-- # create edges_10 tibble -->
+<!-- edges_10 <- as_tibble(igraph::as_data_frame(graph_10, what = "edges")) -->
+<!-- # map node names to each edge -->
+<!-- edges_10 <- edges_10 |> mutate(edge_color = as.factor(from)) -->
+<!-- graph_10 <- graph_10 |> -->
+<!--   activate(edges) |> -->
+<!--   mutate(edge_color = edges_10$edge_color) -->
+
+<!-- graph_10 <- graph_10 %>% -->
+<!--   mutate(edge_group = as.factor(seq_along(E(graph_10)))) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # define colors -->
+<!-- my_palette <- met.brewer("Hiroshige", 10) -->
+<!-- my_palette <- c(my_palette[3], my_palette[4], my_palette[10], my_palette[8], my_palette[6], -->
+<!--                 my_palette[9], my_palette[5], my_palette[7], my_palette[1], my_palette[2]) -->
+
+<!-- # assign correct color to alphabetical order (so if Covid is first, I want the 3rd color) -->
+<!-- # my order:     social interactions, work, covid, education, relationships -->
+<!-- #               money, research, lifestyle, preferences, entertainment -->
+<!-- # alphabetical: Covid, education, entertainment, lifestyle, money, -->
+<!-- #               preferences, relationships, research, social interactions, work -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- # plot -->
+<!-- set.seed(2) -->
+<!-- ggraph(graph_10, layout = "circle") + -->
+<!--   geom_edge_arc(aes(width = weight,  color = edge_color, group = edge_group), -->
+<!--                 check_overlap = TRUE, angle_calc = "along", -->
+<!--                 start_cap = circle(0.15, "in"), -->
+<!--                 end_cap = circle(0.15, "in"), curvature = -0.075) + -->
+<!--   geom_node_point(aes(size = prior_sum, color = name)) + -->
+<!--   scale_edge_width(range = c(0.1, 2)) + -->
+<!--   coord_fixed() + -->
+<!--   theme_void() + -->
+<!--   scale_edge_color_manual(values = my_palette) + -->
+<!--   scale_color_manual(values = my_palette) + -->
+<!--   theme(legend.position = "none") -->
+
+<!-- # save -->
+<!-- ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/DAG_10.pdf", -->
+<!--        width = 5, -->
+<!--        height = 5, -->
+<!--        units = "in") -->
+
+<!-- ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/DAG_10.png", -->
+<!--        width = 5, -->
+<!--        height = 5, -->
+<!--        units = "in") -->
+<!-- ``` -->
+
+<!-- ### Topic occurrence across convos -->
+
+<!-- Averaging across transcripts, what proportion of conversations were in a given group of cluster topics at each 10% of the conversation progression? -->
+
+<!-- **HS FIX: make sure proportion is across the 200 conversations (so prop is out of 200)** -->
+
+<!-- ```{r} -->
+<!-- topic_layer <- transition_groups_10 |> -->
+<!--   select(PID, transcript_id, group, turn_100_scaled, cluster_label) |> -->
+<!--   group_by(group, turn_100_scaled) |> -->
+<!--   summarize(occurrence = length(unique(transcript_id))) |> -->
+<!--   ungroup() |> -->
+<!--   group_by(turn_100_scaled) |> -->
+<!--   mutate(turn_count = sum(occurrence)) |> -->
+<!--   mutate(prop = occurrence/turn_count) |> -->
+<!--   ungroup() -->
+
+<!-- # layer cake plot -->
+<!-- ggplot(data = topic_layer, -->
+<!--        aes(x = turn_100_scaled, y = prop, fill = group)) + -->
+<!--   geom_area(color = "white") + -->
+<!--   scale_fill_manual(values=my_palette) + -->
+<!--   theme_void() + -->
+<!--   theme(legend.position = "none") -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- topic_occ <- transition_groups_10 |> -->
+<!--   select(PID, transcript_id, group, turn_10_scaled, cluster_label) |> -->
+<!--   group_by(group, turn_10_scaled) |> -->
+<!--   summarize(occurrence = length(unique(transcript_id))) |> -->
+<!--   ungroup() |> -->
+<!--   group_by(turn_10_scaled) |> -->
+<!--   mutate(turn_count = sum(occurrence)) |> -->
+<!--   mutate(prop = occurrence/turn_count) |> -->
+<!--   ungroup() -->
+
+<!-- # highlight the highest proportion -->
+<!-- top_occ <- topic_occ |> -->
+<!--   group_by(turn_10_scaled) |> -->
+<!--   mutate(highlight = occurrence == max(occurrence)) |> -->
+<!--   ungroup() -->
+
+<!-- ggplot(data = topic_occ, aes(x = turn_10_scaled, y = group, fill = occurrence)) + -->
+<!--   geom_tile(color = "white") + # gradient fill -->
+<!--   geom_tile(data = subset(top_occ, highlight),  -->
+<!--             aes(x = turn_10_scaled, y = group, -->
+<!--                 fill = occurrence), -->
+<!--             color = "black", linewidth = 0.5) + # outline highlight -->
+<!--   geom_text(data = subset(top_occ, highlight),  -->
+<!--             aes(x = turn_10_scaled, y = group, label = occurrence)) + -->
+<!--   labs(x = "Conversation Completion", y = "Cluster Group", -->
+<!--        fill = "Occurrence in\n200 Transcripts") + -->
+<!--   scale_x_continuous(breaks = seq(0,10,by=1)) + -->
+<!--   scale_fill_gradient(limits = c(0,120), oob = scales::squish, low = "white", high = "#4f8dae") + -->
+<!--   theme_cowplot() -->
+
+<!-- # save -->
+<!-- ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/topic_prop.pdf", -->
+<!--        width = 8, -->
+<!--        height = 5, -->
+<!--        units = "in") -->
+
+<!-- ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/topic_prop.png", -->
+<!--        width = 8, -->
+<!--        height = 5, -->
+<!--        units = "in") -->
+<!-- ``` -->
+
+
+<!-- ## 50 cluster labels -->
+<!-- ```{r} -->
+<!-- # create data frame with current/prior topics using cluster labels -->
+<!-- # group by participant and add topic numbers -->
+<!-- transition_matrix_50 <- transcripts_clusters_50 |> -->
+<!--   ungroup() |> -->
+<!--   group_by(PID) |> -->
+<!--   arrange(turn_100_scaled, .by_group = TRUE) |> -->
+<!--   select(PID, cluster_label) |> -->
+<!--   distinct() |> -->
+<!--   group_by(PID) |> -->
+<!--   mutate(current_topic_number = 1:n(), -->
+<!--          current_topic = cluster_label, -->
+<!--          prior_topic_number = lag(current_topic_number), -->
+<!--          prior_topic = lag(cluster_label)) |> -->
+<!--   na.omit() -->
+
+<!-- # count up instances of each transition -->
+<!-- # calculate transition probability (out of total sum per prior category) -->
+<!-- transition_matrix_50 <- transition_matrix_50 |> -->
+<!--   group_by(prior_topic, current_topic) |> -->
+<!--   summarize(transition_count = n()) |> -->
+<!--   ungroup() |> -->
+<!--   group_by(prior_topic) |> -->
+<!--   mutate(prior_sum = sum(transition_count)) |> -->
+<!--   mutate(probability = transition_count/prior_sum) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+<!-- # reorder probability  -->
+<!-- transition_matrix_sorted <- transition_matrix_50 |> -->
+<!--   arrange(desc(probability)) |> -->
+<!--   mutate(prior_topic = factor(prior_topic, levels = unique(prior_topic)[order(-probability)]), -->
+<!--          current_topic = factor(current_topic, levels = unique(current_topic)[order(-probability)])) -->
+
+<!-- # plot! -->
+<!-- ggplot(above_chance, aes(x = prior_topic, y = current_topic, -->
+<!--                            fill = probability)) + -->
+<!--   geom_tile(color = "white") + -->
+<!--   labs(title = "Transition Matrix - 50 Clusters", -->
+<!--        x = "Prior Topic", y = "Current Topic", fill = "Probability") + -->
+<!--   theme_classic() + -->
+<!--   theme(axis.text.x = element_text(angle = 45, hjust = 1), -->
+<!--         plot.title = element_text(hjust = 0.5)) + -->
+<!--   scale_fill_viridis_c(oob = scales::squish, limits = c(0.02,0.1)) -->
+<!-- ``` -->
+
+<!-- ## Directed Arrow Graph -->
+
+<!-- make a directed arrow diagram of topic transitions in which the arrow weights are transition probabilities -->
+
+<!-- ```{r} -->
+<!-- # thx chatgpt for help making this first pass -->
+<!-- # make an edges data frame (edge list) -->
+<!-- edges_50 <- transition_matrix_50 |> -->
+<!--   select(from = prior_topic, to = current_topic, probability) |> -->
+<!--   distinct() -->
+<!-- # make a graph object form the edge list -->
+<!-- graph_50 <- as_tbl_graph(edges_50, directed = TRUE) -->
+<!-- # add topic base rate as node attribute to graph -->
+<!-- V(graph_50)$prior_sum <- transition_matrix_50 |> -->
+<!--   select(prior_topic, prior_sum) |> -->
+<!--   distinct() |> -->
+<!--   pull(prior_sum) -->
+<!-- # create scaled version of probability for visualization -->
+<!-- E(graph_50)$weight <- transition_matrix_50$probability -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # layout = "fr" Frucherman-Reingold layout for directed graphs -->
+<!-- set.seed(2) -->
+<!-- ggraph(graph_50, layout = "fr") + -->
+<!--   geom_edge_link(aes(width = weight, alpha = weight), -->
+<!--                  color = "grey", -->
+<!--                  arrow = arrow(type = "closed", length = unit(0.1, "inches")), -->
+<!--                  end_cap = circle(0.1, "in")) + -->
+<!--   geom_node_point(aes(size = prior_sum)) + -->
+<!--   geom_node_text(aes(label = name), vjust = 1.5, color = "blue", size = 4) + -->
+<!--   scale_edge_width(range = c(0.1, 1)) + # edge thickness range -->
+<!--   scale_edge_alpha(range = c(0.1, 1)) + # edge transparency -->
+<!--   theme_void() + -->
+<!--   theme(legend.position = "none") -->
+<!-- ``` -->
+
+
+<!-- # 4. Entropy -->
+
+<!-- ## 50 clusters -->
+<!-- ```{r, message = FALSE, warning = FALSE} -->
+<!-- # 200 conversations, 200 topics at each bin point, cluster count = 200 for each time point -->
+<!-- # Majority across participants who annotated that conversation; in case of tie pick randomly between them -->
+
+<!-- # define empty data frame -->
+<!-- transcript_majority_clusters_50 <- data.frame() -->
+
+<!-- # loop through each unique transcript, and figure out majority cluster label per time bin -->
+<!-- for (i in unique(transcripts_clusters_50$transcript_id)) { -->
+<!--   # select just this loop's transcript from transcripts_clusters_50 -->
+<!--   this_transcript <- transcripts_clusters_50 |> filter(transcript_id == i) -->
+<!--   # now loop through each scaled integer bin (0-100, by 1) -->
+<!--   for (j in unique(this_transcript$turn_100_scaled)) { -->
+<!--     # select just this loop's bin -->
+<!--     this_bin <- this_transcript |> filter(turn_100_scaled == j) -->
+<!--     # count participant-level cluster labels -->
+<!--     participant_count <- this_bin |> -->
+<!--       group_by(PID) |> -->
+<!--       summarize(participant_cluster_label = unique(cluster_label)) |> -->
+<!--       ungroup() |> -->
+<!--       group_by(participant_cluster_label) |> -->
+<!--       mutate(cluster_count = length(participant_cluster_label)) |> -->
+<!--       # select only label and count -->
+<!--       select(participant_cluster_label, cluster_count) |> -->
+<!--       distinct() |> -->
+<!--       arrange(-cluster_count) |> -->
+<!--       ungroup() -->
+<!--     # take top row cluster if only one winner, if not, randomly take one of top labels if tie -->
+<!--     majority_cluster <- participant_count |> -->
+<!--       slice_max(order_by = cluster_count, n = 1) # may return more than 1 if tie -->
+<!--     # randomly sample from rows of majority cluster -->
+<!--     this_cluster_label <- sample(majority_cluster$participant_cluster_label, 1) -->
+<!--     # takes top row cluster label if only one majority cluster label -->
+<!--     # finally, save the bin, transcript ID, and cluster label for entropy analysis -->
+<!--     save <- data.frame(bin = j, -->
+<!--                        transcript_id = i, -->
+<!--                        majority_cluster_label = this_cluster_label) -->
+<!--     # rbind with transcript_majority_clusters to save for all time points and all transcripts -->
+<!--     transcript_majority_clusters_50 <- rbind(transcript_majority_clusters_50, save) -->
+<!--   } -->
+<!-- } -->
+
+<!-- ``` -->
+
+<!-- ```{r, message = FALSE, warning = FALSE} -->
+<!-- # do the same but with 10% bins -->
+<!-- # define empty data frame -->
+<!-- transcript_majority_clusters_50_10p <- data.frame() -->
+
+<!-- # loop through each unique transcript, and figure out majority cluster label per time bin -->
+<!-- for (i in unique(transcripts_clusters_50$transcript_id)) { -->
+<!--   # select just this loop's transcript from transcripts_clusters_50 -->
+<!--   this_transcript <- transcripts_clusters_50 |> filter(transcript_id == i) -->
+<!--   # now loop through each scaled integer bin (0-10, by 1) -->
+<!--   for (j in unique(this_transcript$turn_10_scaled)) { -->
+<!--     # select just this loop's bin -->
+<!--     this_bin <- this_transcript |> filter(turn_10_scaled == j) -->
+<!--     # count participant-level cluster labels -->
+<!--     participant_count <- this_bin |> -->
+<!--       group_by(PID) |> -->
+<!--       summarize(participant_cluster_label = unique(cluster_label)) |> -->
+<!--       ungroup() |> -->
+<!--       group_by(participant_cluster_label) |> -->
+<!--       mutate(cluster_count = length(participant_cluster_label)) |> -->
+<!--       # select only label and count -->
+<!--       select(participant_cluster_label, cluster_count) |> -->
+<!--       distinct() |> -->
+<!--       arrange(-cluster_count) |> -->
+<!--       ungroup() -->
+<!--     # take top row cluster if only one winner, if not, randomly take one of top labels if tie -->
+<!--     majority_cluster <- participant_count |> -->
+<!--       slice_max(order_by = cluster_count, n = 1) # may return more than 1 if tie -->
+<!--     # randomly sample from rows of majority cluster -->
+<!--     this_cluster_label <- sample(majority_cluster$participant_cluster_label, 1) -->
+<!--     # takes top row cluster label if only one majority cluster label -->
+<!--     # finally, save the bin, transcript ID, and cluster label for entropy analysis -->
+<!--     save <- data.frame(bin = j, -->
+<!--                        transcript_id = i, -->
+<!--                        majority_cluster_label = this_cluster_label) -->
+<!--     # rbind with transcript_majority_clusters to save for all time points and all transcripts -->
+<!--     transcript_majority_clusters_50_10p <- rbind(transcript_majority_clusters_50_10p, save) -->
+<!--   } -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # now compute the percentage appearance of each cluster topic across transcripts per time bin -->
+<!-- topic_prop_50 <- transcript_majority_clusters_50 |> -->
+<!--   group_by(bin, majority_cluster_label) |> -->
+<!--   summarize(cluster_count = length(transcript_id)) |> -->
+<!--   ungroup() |> -->
+<!--   group_by(bin) |> -->
+<!--   mutate(bin_count = sum(cluster_count)) |> -->
+<!--   mutate(prop = cluster_count / bin_count) |> -->
+<!--   ungroup() -->
+
+<!-- # do a 10% bin data frame for tile plot -->
+<!-- topic_prop_10percent_50 <- transcript_majority_clusters_50_10p |> -->
+<!--   group_by(bin, majority_cluster_label) |> -->
+<!--   summarize(cluster_count = length(transcript_id)) |> -->
+<!--   ungroup() |> -->
+<!--   group_by(bin) |> -->
+<!--   mutate(bin_count = sum(cluster_count)) |> -->
+<!--   mutate(prop = cluster_count / bin_count) |> -->
+<!--   ungroup() -->
+
+<!-- # calculate entropy -->
+<!-- topic_entropy_50 <- topic_prop_50 |> -->
+<!--   group_by(bin) |> -->
+<!--   summarize(prop_entropy = entropy(prop)) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # entropy plot -->
+<!-- ggplot(topic_entropy_50, aes(x = bin, y = prop_entropy)) + -->
+<!--   geom_line() + -->
+<!--   theme_cowplot() + -->
+<!--   labs(title = "50 cluster entropy") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+
+<!-- # layer cake plot -->
+<!-- ggplot(data = topic_prop_50, -->
+<!--        aes(x = bin, y = prop, fill = majority_cluster_label)) + -->
+<!--   geom_area(color = "white") + -->
+<!--   scale_fill_manual(values=met.brewer("Hiroshige", 50)) + -->
+<!--   theme_void() + -->
+<!--   theme(legend.position = "none") -->
+<!-- ``` -->
+
+<!-- ```{r, fig.height=8, fig.width=7} -->
+<!-- # highlight the highest proportion per bin -->
+<!-- topic_prop_10percent_50 <- topic_prop_10percent_50 |> -->
+<!--   group_by(bin) |> -->
+<!--   mutate(highlight = prop == max(prop)) |> -->
+<!--   ungroup() -->
+
+<!-- # tile plot (a la Templeton coversational launch pads) -->
+<!-- ggplot(data = topic_prop_10percent_50, aes(x = bin, y = majority_cluster_label, fill = prop)) + -->
+<!--   geom_tile() + # gradient fill -->
+<!--   geom_tile(data = subset(topic_prop_10percent_50, highlight), -->
+<!--             aes(x = bin, y = majority_cluster_label, fill = prop),  -->
+<!--             color = "black", size = 0.5) + # outline highest -->
+<!--   scale_x_continuous(breaks = seq(0,10,by=1)) + -->
+<!--   scale_fill_gradient(limits = c(0,0.3), oob = scales::squish, low = "white", high = "navy") + -->
+<!--   theme_cowplot() -->
+<!-- ``` -->
+
+<!-- ## save -->
+<!-- ```{r} -->
+<!-- # save data for later -->
+<!-- write.csv(topic_prop_50, "./data/output/topic_prop_by_time_bin_50.csv", row.names = FALSE) -->
+<!-- ``` -->
+
+
+
+
+<!-- # 6. Illustrative Example -->
+
+<!-- For figure 1, highlighting our experiment and analytic approach, I want to use one example participant and transcript to... A) show the entire transcript a la vscode and highlight where this participant noted topic shifts, B) use the cluster labels from 50 classification to define topics, C) create a TSNE plot and word cloud showing the overlap of participant-provided labels with cluster labels (TSNE) and the frequency of cluster labels appearing across ALL transcripts, E) provide a 10-turn window semantic similarity trajectory of this example conversation to plot above the transcript. -->
+
+<!-- ## topic label and location -->
+<!-- ```{r} -->
+<!-- # B) cluster labels of topic shifts -->
+<!-- # load transcript data -->
+<!-- example_transcripts <- read.csv("./data/processed/all_participant_transcripts.csv") -->
+<!-- # make all topics lowercase -->
+<!-- example_transcripts$new_topic <- tolower(example_transcripts$new_topic) -->
+<!-- # load 50 cluster data -->
+<!-- example_50 <- read.csv("./data/output/topic_clusters_50.csv") -->
+
+<!-- # merge by PID, transcript_id, new_topic, and topic_order -->
+<!-- example_B <- merge(example_transcripts, example_50, -->
+<!--                    by = c("PID", "transcript_id", "new_topic", "topic_order")) -->
+
+<!-- # check that all observations are accounted for -->
+<!-- anti_join(example_transcripts, example_50) -->
+
+<!-- # finally, load cluster labels... -->
+<!-- cluster_labels <- read.csv("./data/output/topic_cluster_labels_50_alt.csv") -->
+<!-- # ... and add cluster labels based on clusters -->
+<!-- example_B <- merge(example_B, cluster_labels, by = "clusters") -->
+
+<!-- rm(cluster_labels, example_transcripts, example_50) -->
+
+<!-- # re-scale and round scaled_turn_id to 0-100 integers -->
+<!-- example_B <- example_B |> -->
+<!--   mutate(turn_100_scaled = round((scaled_turn_id - min(scaled_turn_id)) /  -->
+<!--            (max(scaled_turn_id) - min(scaled_turn_id)) * 100)) -->
+
+<!-- # example transcript -->
+<!-- transcript <- "f81a3aa9-3cb3-4df0-ba18-9b1f6f19e5ba" -->
+<!-- # example PID -->
+<!-- PID_coarse <- "[False, '66bbc95713288ad8d1e8578d', None]" -->
+<!-- PID_granular <- "[False, '6724d4dc0e4e106b64f4dd4b', None]" -->
+
+<!-- # subset to just this transcript and these participants -->
+<!-- example_Bsubset <- example_B |> filter(transcript_id == transcript & -->
+<!--                                          PID == PID_coarse | PID == PID_granular) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- ggplot(data = example_Bsubset, aes(x = turn_100_scaled, y = PID, -->
+<!--                            color = cluster_label, fill = cluster_label)) + -->
+<!--   geom_tile() + -->
+<!--   theme_cowplot() + -->
+<!--   scale_color_manual(values=met.brewer("Hiroshige", 17)) + -->
+<!--   scale_fill_manual(values=met.brewer("Hiroshige", 17)) + -->
+<!--   labs(x = "conversation completion (%)", y = "topic category", -->
+<!--        title = "50 topic clusters") + -->
+<!--   theme(legend.position = "bottom", -->
+<!--         plot.title = element_text(hjust = 0.5)) -->
+<!-- ``` -->
+
+<!-- ## word cloud -->
+<!-- ```{r} -->
+<!-- # get frequency of cluster labels appearance from transcripts_clusters_50 -->
+<!-- cluster_freq <- transcripts_clusters_50 |> -->
+<!--   ungroup() |> -->
+<!--   dplyr::group_by(cluster_label) |> -->
+<!--   summarize(cluster_count = length(turn_id)) |> -->
+<!--   ungroup() |> -->
+<!--   mutate(total_count = sum(cluster_count)) |> -->
+<!--   mutate(prop = (cluster_count/total_count)*100) |> -->
+<!--   select("word" = cluster_label, "freq" = prop) -->
+
+<!-- # for ease of view in word cloud, create just one to three word labels -->
+<!-- cluster_freq <- cluster_freq |> -->
+<!--   mutate(word = case_when( -->
+<!--     word == "animals, pets" ~ "animals", -->
+<!--     word == "children, kids, childhood" ~ "children", -->
+<!--     word == "climate, natural distasters, environment" ~ "climate", -->
+<!--     word == "college, university, degree, major" ~ "college", -->
+<!--     word == "decor, toys, items, masks" ~ "items", -->
+<!--     word == "discussion, questions" ~ "questions", -->
+<!--     word == "housing, home, hometown, residence" ~ "home", -->
+<!--     word == "job, money, business" ~ "money", -->
+<!--     word == "language, books, news, reading, writing" ~ "books, news", -->
+<!--     word == "lifestyle, social life, living situation" ~ "lifestyle", -->
+<!--     word == "location, city, country" ~ "location", -->
+<!--     word == "mood, feelings, current events" ~ "mood", -->
+<!--     word == "politics, election, voting, protests" ~ "politics", -->
+<!--     word == "prices, costs, taxes, economy, finance" ~ "economy", -->
+<!--     word == "relationships, dating, marriage" ~ "relationships", -->
+<!--     word == "research, studies, experiment" ~ "research", -->
+<!--     word == "saying goodbye, farewell" ~ "saying goodbye, farewell", -->
+<!--     word == "teaching, classes, learning" ~ "learning, teaching", -->
+<!--     word == "technical difficulty, audio issues" ~ "technical difficulties", -->
+<!--     word == "technology, virtual reality, social media, internet" ~ "technology, internet", -->
+<!--     word == "television, podcasts, shows" ~ "TV, podcasts", -->
+<!--     word == "travel, vacation, tourism" ~ "travel", -->
+<!--     word == "vaccine, health, sickness" ~ "health", -->
+<!--     word == "work, profession, career" ~ "profession, career", -->
+<!--     TRUE ~ word # leave all others unchanged -->
+<!--   )) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- library(wordcloud2) -->
+<!-- library(webshot) -->
+<!-- library(htmlwidgets) -->
+
+
+<!-- # save path -->
+<!-- # png("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/50_cluster_wordcloud.png",  -->
+<!-- #     width = 2400, height = 1800, res = 300) -->
+<!-- # plot -->
+<!-- set.seed(123) -->
+<!-- my_plot <- wordcloud2(cluster_freq,  -->
+<!--            fontFamily = "Arial", size = 1, -->
+<!--            color = met.brewer("Hiroshige", 50), -->
+<!--            rotateRatio = 0) -->
+<!-- # save -->
+<!-- saveWidget(my_plot,"/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/50_cluster_wordcloud.html",  -->
+<!--            selfcontained = FALSE) -->
+<!-- webshot("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/50_cluster_wordcloud.html", -->
+<!--         "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/50_cluster_wordcloud.pdf", -->
+<!--         delay = 5, vwidth = 1500, vheight = 700) -->
+<!-- # show -->
+<!-- my_plot -->
+
+<!-- ``` -->
+
+
+<!-- ## similarity -->
+<!-- ```{r} -->
+<!-- # E) 10 turn window semantic similarity trajectory of example conversation -->
+<!-- example_E <- read.csv("./data/output/annotated_transcripts_tile_10_0.csv") |>  -->
+<!--   filter(transcript_id == transcript) -->
+<!-- # load annotation data for just my coarse example participant -->
+<!-- annotation_E <- read.csv("./data/processed/dense_subset_processed.csv") |> -->
+<!--   filter(PID == PID_coarse) -->
+<!-- # apply function to check where annotations fall -->
+<!-- tile_example <- detect_window_annotations(example_E, annotation_E) -->
+<!-- # match cluster label with participant annotation -->
+<!-- this_participant_cluster <- transcripts_clusters_50 |> -->
+<!--   filter(PID == PID_coarse) |> -->
+<!--   select(clusters, cluster_label, "annotated_label" = new_topic) |> -->
+<!--   distinct() -->
+<!-- # match -->
+<!-- tile_example <- merge(tile_example, this_participant_cluster, by = "annotated_label", all.x = TRUE) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # plot -->
+<!-- ggplot(data = tile_example, aes(x = A_start_turn, y = cosine_similarity)) + -->
+<!--   geom_line() + -->
+<!--   geom_vline(data = tile_example[!is.na(tile_example$annotated_label),], -->
+<!--              aes(xintercept = A_start_turn, color = cluster_label), linetype = "dashed") + -->
+<!--   theme_void() + -->
+<!--   theme(legend.position = "none") -->
+
+<!-- # save -->
+<!-- ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/example_cosine_similarity.pdf", -->
+<!--        width = 15, -->
+<!--        height = 2, -->
+<!--        units = "in") -->
+
+<!-- ``` -->
+
+<!-- ## tsne -->
+<!-- ```{r} -->
+<!-- # load tsne values for HS-provided cluster labels and participant-provided topic labels -->
+<!-- tsne_50 <- read.csv("./data/output/tsne_50_short.csv") -->
+
+<!-- # subset to just participant and clustered types -->
+<!-- tsne_cluster_50 <- tsne_50 |> filter(type == "cluster") -->
+<!-- tsne_participant_50 <- tsne_50 |> filter(type == "participant") -->
+
+<!-- # set color groups based on topic relatedness (10 groups) -->
+<!-- tsne_cluster_50 <- tsne_cluster_50 |>  -->
+<!--   mutate(group = case_when( -->
+<!--     # social interactions -->
+<!--     topic == "questions" ~ 1, -->
+<!--     topic == "goodbyes" ~ 1, -->
+<!--     topic == "introductions" ~ 1, -->
+<!--     topic == "greeting" ~ 1, -->
+<!--     topic == "saying goodbye, farewell" ~ 1, -->
+<!--     # work and career -->
+<!--     topic == "profession, career" ~ 2, -->
+<!--     topic == "work" ~ 2, -->
+<!--     topic == "past experiences" ~ 2, -->
+<!--     topic == "location" ~ 2, -->
+<!--     topic == "future plans" ~ 2, -->
+<!--     # health and covid -->
+<!--     topic == "health" ~ 3, -->
+<!--     topic == "covid" ~ 3, -->
+<!--     topic == "quarantine" ~ 3, -->
+<!--     topic == "pandemic" ~ 3, -->
+<!--     topic == "lockdown" ~ 3, -->
+<!--     # education -->
+<!--     topic == "school" ~ 4, -->
+<!--     topic == "college" ~ 4, -->
+<!--     topic == "learning, teaching" ~ 4, -->
+<!--     topic == "technology, internet" ~ 4, -->
+<!--     topic == "technical difficulties" ~ 4, -->
+<!--     # family and relationships -->
+<!--     topic == "parent, sibling" ~ 5, -->
+<!--     topic == "family" ~ 5, -->
+<!--     topic == "relationships" ~ 5, -->
+<!--     topic == "children" ~ 5, -->
+<!--     topic == "people, names" ~ 5, -->
+<!--     # money -->
+<!--     topic == "economy" ~ 6, -->
+<!--     topic == "money" ~ 6, -->
+<!--     topic == "politics" ~ 6, -->
+<!--     topic == "items" ~ 6, -->
+<!--     topic == "food, drink" ~ 6, -->
+<!--     # research -->
+<!--     topic == "research" ~ 7, -->
+<!--     topic == "surveys" ~ 7, -->
+<!--     topic == "prolific" ~ 7, -->
+<!--     topic == "starting the call" ~ 7, -->
+<!--     topic == "ending the call" ~ 7, -->
+<!--     # lifestyle -->
+<!--     topic == "time" ~ 8, -->
+<!--     topic == "lifestyle" ~ 8, -->
+<!--     topic == "age" ~ 8, -->
+<!--     topic == "home" ~ 8, -->
+<!--     topic == "travel" ~ 8, -->
+<!--     # preferences -->
+<!--     topic == "hobbies, activities" ~ 9, -->
+<!--     topic == "mood" ~ 9, -->
+<!--     topic == "weather" ~ 9, -->
+<!--     topic == "climate" ~ 9, -->
+<!--     topic == "animals" ~ 9, -->
+<!--     # entertainment -->
+<!--     topic == "sports, exercise" ~ 10, -->
+<!--     topic == "music, instruments" ~ 10, -->
+<!--     topic == "books, news" ~ 10, -->
+<!--     topic == "TV, podcasts" ~ 10, -->
+<!--     topic == "movies, video games" ~ 10 -->
+<!--   )) -->
+
+<!-- # just select cluster number and group number -->
+<!-- cluster_group <- tsne_cluster_50 |> -->
+<!--   select(clusters, group) |> -->
+<!--   distinct() -->
+<!-- # merge cluster_group with participant tsne -->
+<!-- tsne_participant_50 <- merge(tsne_participant_50, cluster_group, by = "clusters") -->
+
+<!-- # add cluster frequency  -->
+<!-- names(cluster_freq)[1] <- "topic" -->
+<!-- cluster_freq$topic[cluster_freq$topic == "goodbye"] <- "goodbyes" -->
+<!-- cluster_freq$topic[cluster_freq$topic == "introduction"] <- "introductions" -->
+<!-- tsne_cluster_50 <- merge(tsne_cluster_50, cluster_freq, by = "topic") -->
+
+<!-- # add letters to tsne_cluster_50 -->
+<!-- my_letters <- c(letters, sapply(1:24, function(x) paste0(letters[x], letters[x]))) -->
+<!-- tsne_cluster_50 <- tsne_cluster_50 |> -->
+<!--   arrange(group, desc(freq)) |> -->
+<!--   mutate(letters = my_letters) -->
+
+<!-- # save -->
+<!-- write.csv(tsne_cluster_50, "./data/output/tsne_cluster_50_data.csv", row.names = FALSE) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- ggplot() + -->
+<!--   geom_point(data = tsne_participant_50, aes(x = tsne_1, y = tsne_2, color = as.factor(group)),  -->
+<!--              alpha = 0.03) + -->
+<!--   #geom_point(data = tsne_cluster_50, aes(x = tsne_1, y = tsne_2, color = as.factor(group)), size = 3) + -->
+<!--   geom_label(data = tsne_cluster_50,  -->
+<!--              aes(x = tsne_1, y = tsne_2, label = letters, fill = as.factor(group)), -->
+<!--              fontface = "bold", color = "white", nudge_x = 0, nudge_y = 0, size = 3) + -->
+<!--   theme_void() + -->
+<!--   scale_color_manual(values=met.brewer("Hiroshige", 10)) + -->
+<!--   scale_fill_manual(values=met.brewer("Hiroshige", 10)) + -->
+<!--   theme(legend.position = "none") -->
+
+<!-- # save -->
+<!-- ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/example_50_tsne.pdf", -->
+<!--        width = 5, -->
+<!--        height = 5, -->
+<!--        units = "in") -->
+<!-- ``` -->
+
+<!-- # 7. Specificity -->
+<!-- ```{r} -->
+
+<!-- ``` -->
+
+<!-- # 8. Utterance / Cluster Similarity -->
+<!-- ```{r} -->
+<!-- uc_sim <- read.csv("./data/output/utterance_cluster_similarity.csv") -->
+
+<!-- uc_sim_sum <- uc_sim |> -->
+<!--   dplyr::group_by(turn_100_scaled, PID, cluster_label) |> -->
+<!--   summarize(mean_similarity = mean(cosine_similarity)) -->
+
+<!-- example_uc <- uc_sim_sum |> filter(PID == "[False, '542498adfdf99b691fb384d1', None]") -->
+
+<!-- ggplot(example_uc, aes(x = turn_100_scaled, y = mean_similarity)) + -->
+<!--   geom_point(alpha = 1) + -->
+<!--   geom_line() -->
+<!-- ``` -->
+
+
