@@ -1,0 +1,48 @@
+---
+title: "4-micro-macro"
+output: html_document
+date: "2025-01-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(here)
+```
+
+```{r read-data}
+corpus <- read_csv(here("../data/sim_fixed.csv")) %>%
+  group_by(PID, transcript_id, topic_order) %>%
+  mutate(within_topic_turn = 1:n(),
+         scaled_within_topic_turn = round(within_topic_turn/n(), 1)) %>%
+  ungroup()
+```
+
+```{r}
+corpus %>%
+  ggplot(aes(x = scaled_turn_id, y= topic_cluster_similarity)) +
+  geom_smooth()
+
+corpus %>%
+  ggplot(aes(x = scaled_turn_id, y= topic_utterance_similarity)) +
+  geom_smooth()
+
+corpus %>%
+  ggplot(aes(x = scaled_turn_id, y= cluster_utterance_similarity)) +
+  geom_smooth()
+
+corpus %>%
+  group_by(PID, transcript_id, scaled_within_topic_turn) %>%
+  summarise(topic_utterance_similarity = mean(topic_utterance_similarity)) %>%
+  ungroup() %>%
+  ggplot(aes(x = scaled_within_topic_turn, y = topic_utterance_similarity)) +
+  geom_point(aes(alpha = 0.02)) +
+  geom_smooth()
+
+```
+
+```{r}
+corpus %>%
+  
+
+```
