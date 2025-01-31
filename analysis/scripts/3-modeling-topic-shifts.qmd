@@ -656,12 +656,75 @@ ggplot(topic_entropy, aes(x = bin, y = prop_entropy)) +
 
 ```{r}
 # load similarity scores between cluster labels, participant labels, and transcript utterances
-sim <- read.csv("./data/output/embedding_similarity.csv")
-  select(PID, transcript_id, cluster_label, scaled_turn_id,
-         topic_cluster_similarity, topic_utterance_similarity, cluster_utterance_similarity)
+sim <- read.csv("./data/output/topic_cluster_utterance_similarity.csv")
 ```
 
 ```{r}
+# add within topic turn numbers
+sim <- sim |>
+  group_by(PID, transcript_id, topic_order) |>
+  mutate(within_topic_turn = 1:n(),
+         scaled_within_topic_turn = round(within_topic_turn/n(), 1)) |>
+  ungroup()
+```
+
+```{r}
+# average by within topic turn number
+sim_sum <- sim |>
+  group_by(PID, transcript_id, scaled_within_topic_turn) |>
+  summarize(topic_utterance = mean(topic_utterance_similarity),
+            topic_cluster = mean(topic_cluster_similarity),
+            cluster_utterance = mean(cluster_utterance_similarity)) |>
+  # average across PID and transcript
+  ungroup() |>
+  group_by(scaled_within_topic_turn) |>
+  summarize(mean_topic_utterance = mean(topic_utterance),
+            sd_topic_utterance = sd(topic_utterance),
+            mean_topic_cluster = mean(topic_cluster),
+            sd_topic_cluster = sd(topic_cluster),
+            mean_cluster_utterance = mean(cluster_utterance),
+            sd_cluster_utterance = sd(cluster_utterance))
+```
+
+
+```{r}
+# plot
+ggplot(sim, aes(x = scaled_turn_id, y = topic_cluster_similarity)) +
+  geom_smooth() +
+  theme_cowplot()
+
+ggplot(sim, aes(x = scaled_within_topic_turn, y = topic_cluster_similarity)) +
+  geom_smooth() +
+  theme_cowplot()
+```
+
+```{r}
+# plot average
+ggplot(data = sim_sum, aes(x = scaled_within_topic_turn)) +
+  # topic + utterance similarity
+  geom_ribbon(aes(y = mean_topic_utterance, 
+                  ymin = mean_topic_utterance - sd_topic_utterance,
+                  ymax = mean_topic_utterance + sd_topic_utterance),
+              fill = "blue", alpha = 0.2, color = NA) +
+  geom_point(aes(y = mean_topic_utterance)) +
+  geom_line(aes(y = mean_topic_utterance), color = "blue") +
+  theme_cowplot()
+
+# as you progress through a topic, the utterance/topic similarity decreases, suggesting conversations within a topic become more specific than when the topic started
+
+# plot example conversation
+transcript <- "f81a3aa9-3cb3-4df0-ba18-9b1f6f19e5ba"
+PID_coarse <- "[False, '66bbc95713288ad8d1e8578d', None]"
+
+sim_example <- sim |>
+  filter(transcript_id == transcript & PID == PID_coarse)
+
+```
+
+
+```{r}
+# 
+
 sim_fixed <- sim |>
   select(PID, transcript_id, turn_id, scaled_turn_id, topic_cluster_similarity, new_topic,
          topic_utterance_similarity, cluster_utterance_similarity, number_of_turns) |>
@@ -786,141 +849,249 @@ ggplot(example_sim, aes(x = scaled_turn_id, y = topic_utterance_similarity,
   theme(legend.position = "none")
 ```
 
-# 4. UMAP
+# 4. TSNE
 
-<!-- 2 components, 15 nearest neighbors, minimum distance of 0.1, cosine  -->
-<!-- https://umap-learn.readthedocs.io/en/latest/parameters.html  -->
+```{r}
+# load tsne data
+tsne <- read.csv("./data/output/topic_cluster_utterance_tsne.csv")
 
-<!-- ```{r} -->
-<!-- # load umap data -->
-<!-- umap <- read.csv("./data/output/umap_concat.csv") -->
-<!-- #umap <- read.csv("./data/output/umap.csv") -->
+# get only cluster embeddings
+tsne_cluster <- tsne |>
+  select(embedding_type, cluster_label, tsne1, tsne2) |>
+  filter(embedding_type == "embeddings_cluster") |>
+  group_by(cluster_label) |>
+  summarize(tsne_1 = mean(tsne1),
+            tsne_2 = mean(tsne2))
+# add thematic labels to tsne_cluster
+tsne_cluster <- tsne_cluster |>
+  mutate(group_theme = case_when(
+    # COVID
+    cluster_label == "pandemic, quarantine" ~ "COVID-19",
+    cluster_label == "masks" ~ "COVID-19",
+    cluster_label == "covid" ~ "COVID-19",
+    cluster_label == "health, illness" ~ "COVID-19",
+    cluster_label == "zoom" ~ "COVID-19",
+    # RELATIONSHIPS
+    cluster_label == "family" ~ "relationships",
+    cluster_label == "relationships" ~ "relationships",
+    cluster_label == "parents" ~ "relationships",
+    cluster_label == "kids, children" ~ "relationships",
+    cluster_label == "people, fictional characters" ~ "relationships",
+    # WORK
+    cluster_label == "employment, job" ~ "work",
+    cluster_label == "work" ~ "work",
+    cluster_label == "career, profession" ~ "work",
+    cluster_label == "money, economy" ~ "work",
+    cluster_label == "future plans" ~ "work",
+    # SCHOOL
+    cluster_label == "school" ~ "school",
+    cluster_label == "college" ~ "school",
+    cluster_label == "classes, teaching" ~ "school",
+    cluster_label == "question, discussion" ~ "school",
+    cluster_label == "technology, computer" ~ "school",
+    # RESEARCH
+    cluster_label == "research, study" ~ "research",
+    cluster_label == "prolific" ~ "research",
+    cluster_label == "survey" ~ "research",
+    cluster_label == "technical issue" ~ "research",
+    cluster_label == "time" ~ "research",
+    # INTERACTION
+    cluster_label == "starting the call" ~ "interaction",
+    cluster_label == "ending the call" ~ "interaction",
+    cluster_label == "greeting" ~ "interaction",
+    cluster_label == "goodbye" ~ "interaction",
+    cluster_label == "introduction" ~ "interaction",
+    cluster_label == "ending conversation" ~ "interaction",
+    # PREFERENCES
+    cluster_label == "pets" ~ "preferences",
+    cluster_label == "travel" ~ "preferences",
+    cluster_label == "mood, preferences" ~ "preferences",
+    cluster_label == "personal experience" ~ "preferences",
+    cluster_label == "age" ~ "preferences",
+    # LOCATION
+    cluster_label == "weather" ~ "location",
+    cluster_label == "location" ~ "location",
+    cluster_label == "living situation, home" ~ "location",
+    cluster_label == "city, state, country" ~ "location",
+    cluster_label == "holiday" ~ "location",
+    # NEWS / POLITICS
+    cluster_label == "crime, protest, government" ~ "news & politics",
+    cluster_label == "news, social media" ~ "news & politics",
+    cluster_label == "election, politics" ~ "news & politics",
+    cluster_label == "natural disasters, climate" ~ "news & politics",
+    # ENTERTAINMENT
+    cluster_label == "music, instruments" ~ "entertainment",
+    cluster_label == "television, movies" ~ "entertainment",
+    cluster_label == "items, fashion, clothing" ~ "entertainment",
+    cluster_label == "food, drink" ~ "entertainment",
+    cluster_label == "hobbies, activites, sports" ~ "entertainment"))
 
-<!-- # create branching graph of first to last mention of cluster label (are conversations becoming more idiosyncratic?) -->
-<!-- ``` -->
+# add letters for ease of view too
+my_letters <- c(letters, sapply(1:24, function(x) paste0(letters[x], letters[x])))
+tsne_cluster <- tsne_cluster |>
+  arrange(group_theme) |>
+  mutate(letters = my_letters)
+```
 
-<!-- Get utterance UMAP at first and last mention of cluster label -->
+```{r}
+# get only topic embeddings
+tsne_topic <- tsne |>
+  select(embedding_type, cluster_label, new_topic, tsne1, tsne2) |>
+  filter(embedding_type == "embeddings_topic") |>
+  group_by(cluster_label, new_topic) |>
+  summarize(tsne_1 = mean(tsne1),
+            tsne_2 = mean(tsne2))
 
-<!-- ```{r} -->
-<!-- # get first and last mention of each cluster label per participant -->
-<!-- cluster_mention <- transcripts_clusters |> -->
-<!--   select(PID, cluster_label, scaled_turn_id, utterance) |> -->
-<!--   distinct() |> -->
-<!--   group_by(PID, cluster_label) |> -->
-<!--   summarize(turn_first = scaled_turn_id[which.min(scaled_turn_id)], -->
-<!--             utterance_first = utterance[which.min(scaled_turn_id)], -->
-<!--             turn_last = scaled_turn_id[which.max(scaled_turn_id)], -->
-<!--             utterance_last = utterance[which.max(scaled_turn_id)]) -->
+# add thematic labels to tsne_topic
+tsne_topic <- tsne_topic |>
+  mutate(group_theme = case_when(
+    # COVID
+    cluster_label == "pandemic, quarantine" ~ "COVID-19",
+    cluster_label == "masks" ~ "COVID-19",
+    cluster_label == "covid" ~ "COVID-19",
+    cluster_label == "health, illness" ~ "COVID-19",
+    cluster_label == "zoom" ~ "COVID-19",
+    # RELATIONSHIPS
+    cluster_label == "family" ~ "relationships",
+    cluster_label == "relationships" ~ "relationships",
+    cluster_label == "parents" ~ "relationships",
+    cluster_label == "kids, children" ~ "relationships",
+    cluster_label == "people, fictional characters" ~ "relationships",
+    # WORK
+    cluster_label == "employment, job" ~ "work",
+    cluster_label == "work" ~ "work",
+    cluster_label == "career, profession" ~ "work",
+    cluster_label == "money, economy" ~ "work",
+    cluster_label == "future plans" ~ "work",
+    # SCHOOL
+    cluster_label == "school" ~ "school",
+    cluster_label == "college" ~ "school",
+    cluster_label == "classes, teaching" ~ "school",
+    cluster_label == "question, discussion" ~ "school",
+    cluster_label == "technology, computer" ~ "school",
+    # RESEARCH
+    cluster_label == "research, study" ~ "research",
+    cluster_label == "prolific" ~ "research",
+    cluster_label == "survey" ~ "research",
+    cluster_label == "technical issue" ~ "research",
+    cluster_label == "time" ~ "research",
+    # INTERACTION
+    cluster_label == "starting the call" ~ "interaction",
+    cluster_label == "ending the call" ~ "interaction",
+    cluster_label == "greeting" ~ "interaction",
+    cluster_label == "goodbye" ~ "interaction",
+    cluster_label == "introduction" ~ "interaction",
+    cluster_label == "ending conversation" ~ "interaction",
+    # PREFERENCES
+    cluster_label == "pets" ~ "preferences",
+    cluster_label == "travel" ~ "preferences",
+    cluster_label == "mood, preferences" ~ "preferences",
+    cluster_label == "personal experience" ~ "preferences",
+    cluster_label == "age" ~ "preferences",
+    # LOCATION
+    cluster_label == "weather" ~ "location",
+    cluster_label == "location" ~ "location",
+    cluster_label == "living situation, home" ~ "location",
+    cluster_label == "city, state, country" ~ "location",
+    cluster_label == "holiday" ~ "location",
+    # NEWS / POLITICS
+    cluster_label == "crime, protest, government" ~ "news & politics",
+    cluster_label == "news, social media" ~ "news & politics",
+    cluster_label == "election, politics" ~ "news & politics",
+    cluster_label == "natural disasters, climate" ~ "news & politics",
+    # ENTERTAINMENT
+    cluster_label == "music, instruments" ~ "entertainment",
+    cluster_label == "television, movies" ~ "entertainment",
+    cluster_label == "items, fashion, clothing" ~ "entertainment",
+    cluster_label == "food, drink" ~ "entertainment",
+    cluster_label == "hobbies, activites, sports" ~ "entertainment"))
+```
 
-<!-- # pivot longer such that I have variables for type (first/last), turn (0-1), and utterance (chr) -->
-<!-- cluster_mention <- cluster_mention |> -->
-<!--   pivot_longer(cols = starts_with("turn"), # select columns that start with "turn" -->
-<!--                names_to = "type",          # name new column for turn type -->
-<!--                names_prefix = "turn_",     # drop prefix -->
-<!--                values_to = "turn") |>      # store values -->
-<!--   pivot_longer(cols = starts_with("utterance"), -->
-<!--                names_to = "utterance_type", -->
-<!--                names_prefix = "utterance_", -->
-<!--                values_to = "utterance") |> -->
-<!--   # combine into a single variable -->
-<!--   mutate(type = ifelse(type == "first", "first", "last"), -->
-<!--          utterance_type = ifelse(utterance_type == "first", "first", "last")) |> -->
-<!--   # drop rows where utterance type and turn type are mismatched -->
-<!--   filter(type == utterance_type) |> -->
-<!--   # drop unnecessary utterance type variable -->
-<!--   select(-utterance_type) -->
+```{r}
+# plot
+ggplot() +
+  geom_point(data = tsne_topic, aes(x = tsne_1, y = tsne_2, color = as.factor(group_theme)),
+             alpha = 0.03, size = 3) +
+  geom_point(data = tsne_cluster, aes(x = tsne_1, y = tsne_2, color = as.factor(group_theme)), size = 3) +
+  geom_label(data = tsne_cluster,
+             aes(x = tsne_1, y = tsne_2, label = cluster_label, fill = as.factor(group_theme)),
+             fontface = "bold", color = "white", nudge_x = 0, nudge_y = 0, size = 3) +
+  theme_void() +
+  scale_color_manual(values=met.brewer("Hiroshige", 10)) +
+  scale_fill_manual(values=met.brewer("Hiroshige", 10)) +
+  theme(legend.position = "none")
 
-<!-- # match with umap of utterance / cluster label at these turns -->
-<!-- umap_match <- umap |> -->
-<!--   filter(type == "utterance") |> -->
-<!--   select(PID, cluster_label, utterance, umap1, umap2) |> -->
-<!--   group_by(PID, cluster_label, utterance) |> -->
-<!--   summarize(umap1_utterance = mean(umap1), -->
-<!--             umap2_utterance = mean(umap2)) -->
+# save combined figure
+ggsave(filename = "./cogsci/figures/tsne-new.pdf",
+       dpi = 300,
+       units = "in",
+       width = 8,
+       heigh = 6)
+```
 
-<!-- # merge -->
-<!-- umap_summary <- merge(cluster_mention, umap_match, by = c("PID", "utterance", "cluster_label")) -->
+## Within Topic
 
-<!-- # check join -->
-<!-- anti_join(umap_summary, cluster_mention) -->
+```{r}
+# get first and last mention of each cluster label per participant
+cluster_mention <- tsne |>
+  group_by(PID, cluster_label) |>
+  summarize(turn_first = scaled_turn_id[which.min(scaled_turn_id)],
+            utterance_first = utterance[which.min(scaled_turn_id)],
+            turn_last = scaled_turn_id[which.max(scaled_turn_id)],
+            utterance_last = utterance[which.max(scaled_turn_id)])
 
-<!-- ``` -->
+# pivot cluster_mention longer
+cluster_mention <- cluster_mention |>
+  pivot_longer(cols = starts_with("turn"),
+               names_to = "type",
+               names_prefix = "turn_",
+               values_to = "turn") |>
+  pivot_longer(cols = starts_with("utterance"),
+               names_to = "utterance_type",
+               names_prefix = "utterance_",
+               values_to = "utterance") |>
+  # combine into single variable
+  mutate(type = ifelse(type == "first", "first", "last"),
+         utterance_type = ifelse(utterance_type == "first", "first", "last")) |>
+  # drop rows where utterance type and turn type are mismatched
+  filter(type == utterance_type) |>
+  # drop unnecessary utterance type variable
+  select(-utterance_type)
+  
+# map with tsne at these turns
+tsne_match <- tsne |>
+  filter(embedding_type == "embeddings_utterance") |>
+  group_by(PID, cluster_label, utterance) |>
+  summarize(tsne_1 = mean(tsne1),
+            tsne_2 = mean(tsne2))
 
-<!-- ```{r} -->
-<!-- # summarize to get average first and last UMAP per cluster_label -->
-<!-- umap_first <- umap_match |> -->
-<!--   ungroup() |> -->
-<!--   filter(utterance_type == "first") |> -->
-<!--   group_by(cluster_label) |> -->
-<!--   summarize(umap1_first_avg = mean(umap1), -->
-<!--             umap2_first_avg = mean(umap2)) -->
+# merge (should be same length as cluster_mention)
+tsne_summary <- merge(cluster_mention, tsne_match, by = c("PID", "utterance", "cluster_label"))
 
-<!-- umap_last <- umap_match |> -->
-<!--   ungroup() |> -->
-<!--   filter(utterance_type == "last") |> -->
-<!--   group_by(cluster_label) |> -->
-<!--   summarize(umap1_last_avg = mean(umap1), -->
-<!--             umap2_last_avg = mean(umap2)) -->
+# check join
+anti_join(tsne_summary, cluster_mention)
+  
+```
 
-<!-- # summary -->
-<!-- umap_summary <- merge(umap_first, umap_last, by = "cluster_label") -->
-
-<!-- # transform -->
-<!-- umap_summary <- umap_summary |> -->
-<!--   gather(key = "time", value = "value", -cluster_label) |> -->
-<!--   separate(time, into = c("umap","turn"), sep = "_") |> -->
-<!--   spread(key = "umap", value = "value") -->
-
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- # plot -->
-<!-- ggplot(data = umap_summary, aes(x = umap1, y = umap2,  -->
-<!--                                 group = cluster_label, color = cluster_label, shape = turn)) + -->
-<!--   geom_point() + -->
-<!--   geom_line() + -->
-<!--   theme_cowplot() + -->
-<!--   theme(legend.position = "none") -->
-<!-- ``` -->
+```{r}
+# transform into average first and last position per cluster label
+tsne_transform <- tsne_summary |>
+  group_by(cluster_label, type) |>
+  summarize(mean_tsne1 = mean(tsne_1),
+            mean_tsne2 = mean(tsne_2))
+```
 
 
-<!-- ```{r} -->
-<!-- # first and last mention of cluster label per participant -->
-<!-- cluster_mention <- umap |> -->
-<!--   select(PID, cluster_label, scaled_turn_id, umap1, umap2) |> -->
-<!--   group_by(PID, cluster_label) |> -->
-<!--   summarize(umap1_first = umap1[which.min(scaled_turn_id)], -->
-<!--             umap1_last = umap1[which.max(scaled_turn_id)], -->
-<!--             umap2_first = umap2[which.min(scaled_turn_id)], -->
-<!--             umap2_last = umap2[which.max(scaled_turn_id)]) -->
+```{r}
+# plot
+ggplot(data = tsne_transform, aes(x = mean_tsne1, y = mean_tsne2,
+                                group = cluster_label, color = cluster_label)) +
+  geom_point() +
+  geom_line(arrow = arrow(length=unit(0.30,"cm"), ends="first", type = "closed")) +
+  theme_cowplot() +
+  theme(legend.position = "none")
+```
 
-<!-- # now average across participants -->
-<!-- cluster_mention_summary <- cluster_mention |> -->
-<!--   group_by(cluster_label) |> -->
-<!--   summarize(umap1_first_avg = mean(umap1_first), -->
-<!--             umap1_last_avg = mean(umap1_last), -->
-<!--             umap2_first_avg = mean(umap2_first), -->
-<!--             umap2_last_avg = mean(umap2_last)) |> -->
-<!--   gather(key = "time", value = "value", -cluster_label) |> -->
-<!--   separate(time, into = c("umap","turn"), sep = "_") |> -->
-<!--   spread(key = "umap", value = "value") -->
-
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- # plot! -->
-<!-- ggplot(data = cluster_mention_summary, aes(x = umap1, y = umap2, group = cluster_label, color = cluster_label)) + -->
-<!--   facet_wrap(.~cluster_label, nrow = 5, scales = "free") + -->
-<!--   geom_point() + -->
-<!--   geom_line() + -->
-<!--   theme(legend.position = "none") -->
-
-<!-- ggplot(result, aes(x = map1, y = map2, group = label, color = label)) + -->
-<!--   geom_point() + -->
-<!--   geom_line() + -->
-<!--   labs(x = "Map1", y = "Map2", title = "First and Last Map Values for Each Label") + -->
-<!--   theme_minimal() -->
-<!-- ``` -->
 
 # 5. Tiling
 
@@ -1352,39 +1523,69 @@ ggplot() +
         plot.title = element_text(hjust = 0.5))
 ```
 
+**Semantic Similarity**
+
 ```{r}
 # get tiled semantic similarity from this transcript only
 example_tile <- read.csv("./data/output/annotated_transcripts_tile_10_0.csv") |>
   filter(transcript_id == transcript)
-example_annotation <- read.csv("./data/processed/dense_subset_processed.csv") |>
+annotation_coarse <- read.csv("./data/processed/dense_subset_processed.csv") |>
   filter(PID == PID_coarse)
+annotation_granular <- read.csv("./data/processed/dense_subset_processed.csv") |>
+  filter(PID == PID_granular)
 # apply function to see where annotations fall relative to transcript
-example_tile <- detect_window_annotations(example_tile, example_annotation)
+example_tile_coarse <- detect_window_annotations(example_tile, annotation_coarse)
+example_tile_granular <- detect_window_annotations(example_tile, annotation_granular)
+
+# make labels lowercase
+example_tile_coarse$annotated_label <- tolower(example_tile_coarse$annotated_label)
+example_tile_granular$annotated_label <- tolower(example_tile_granular$annotated_label)
 
 # match with cluster labels
-example_cluster <- transcripts_clusters |>
+cluster_coarse <- transcripts_clusters |>
   filter(PID == PID_coarse) |>
   select(cluster_label, "annotated_label" = new_topic) |>
   distinct()
 
+cluster_granular <- transcripts_clusters |>
+  filter(PID == PID_granular) |>
+  select(cluster_label, "annotated_label" = new_topic) |>
+  distinct()
+
 # merge
-example_tile <- merge(example_tile, example_cluster, by = 'annotated_label', all.x = TRUE)
+example_tile_coarse <- merge(example_tile_coarse, cluster_coarse, by = 'annotated_label', all.x = TRUE)
+example_tile_granular <- merge(example_tile_granular, cluster_granular, by = 'annotated_label', all.x = TRUE)
 ```
 
 ```{r}
 # plot
-ggplot(data = example_tile, aes(x = A_start_turn, y = cosine_similarity)) +
+ggplot(data = example_tile_coarse, aes(x = A_start_turn, y = cosine_similarity)) +
   geom_line() +
-  geom_vline(data = example_tile[!is.na(example_tile$annotated_label),],
-             aes(xintercept = A_start_turn, color = cluster_label), linetype = "dashed") +
+  # geom_vline(data = example_tile_coarse[!is.na(example_tile_coarse$annotated_label),],
+  #            aes(xintercept = A_start_turn, color = cluster_label), linetype = "dashed") +
   theme_void() +
   theme(legend.position = "none")
 
 # save
-# ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/example_cosine_similarity.pdf",
-#        width = 15,
-#        height = 2,
-#        units = "in")
+ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/example_10_tile_coarse.pdf",
+       width = 15,
+       height = 2,
+       units = "in")
+
+ggplot(data = example_tile_granular, aes(x = A_start_turn, y = cosine_similarity)) +
+  geom_line() +
+  # geom_vline(data = example_tile_granular[!is.na(example_tile_granular$annotated_label),],
+  #            aes(xintercept = A_start_turn, color = cluster_label), linetype = "dashed") +
+  # geom_text(data = example_tile_granular[!is.na(example_tile_granular$annotated_label),],
+  #            aes(y = cosine_similarity, color = cluster_label, label = cluster_label)) +
+  theme_void() +
+  theme(legend.position = "bottom")
+
+# save
+ggsave("/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/cogsci/figures/example_10_tile_granular.pdf",
+       width = 15,
+       height = 2,
+       units = "in")
 ```
 
 ```{r}
@@ -1402,6 +1603,141 @@ transcripts_clusters |>
 
 
 
+
+
+<!-- 2 components, 15 nearest neighbors, minimum distance of 0.1, cosine  -->
+<!-- https://umap-learn.readthedocs.io/en/latest/parameters.html  -->
+
+<!-- ```{r} -->
+<!-- # load umap data -->
+<!-- umap <- read.csv("./data/output/umap_concat.csv") -->
+<!-- #umap <- read.csv("./data/output/umap.csv") -->
+
+<!-- # create branching graph of first to last mention of cluster label (are conversations becoming more idiosyncratic?) -->
+<!-- ``` -->
+
+<!-- Get utterance UMAP at first and last mention of cluster label -->
+
+<!-- ```{r} -->
+<!-- # get first and last mention of each cluster label per participant -->
+<!-- cluster_mention <- transcripts_clusters |> -->
+<!--   select(PID, cluster_label, scaled_turn_id, utterance) |> -->
+<!--   distinct() |> -->
+<!--   group_by(PID, cluster_label) |> -->
+<!--   summarize(turn_first = scaled_turn_id[which.min(scaled_turn_id)], -->
+<!--             utterance_first = utterance[which.min(scaled_turn_id)], -->
+<!--             turn_last = scaled_turn_id[which.max(scaled_turn_id)], -->
+<!--             utterance_last = utterance[which.max(scaled_turn_id)]) -->
+
+<!-- # pivot longer such that I have variables for type (first/last), turn (0-1), and utterance (chr) -->
+<!-- cluster_mention <- cluster_mention |> -->
+<!--   pivot_longer(cols = starts_with("turn"), # select columns that start with "turn" -->
+<!--                names_to = "type",          # name new column for turn type -->
+<!--                names_prefix = "turn_",     # drop prefix -->
+<!--                values_to = "turn") |>      # store values -->
+<!--   pivot_longer(cols = starts_with("utterance"), -->
+<!--                names_to = "utterance_type", -->
+<!--                names_prefix = "utterance_", -->
+<!--                values_to = "utterance") |> -->
+<!--   # combine into a single variable -->
+<!--   mutate(type = ifelse(type == "first", "first", "last"), -->
+<!--          utterance_type = ifelse(utterance_type == "first", "first", "last")) |> -->
+<!--   # drop rows where utterance type and turn type are mismatched -->
+<!--   filter(type == utterance_type) |> -->
+<!--   # drop unnecessary utterance type variable -->
+<!--   select(-utterance_type) -->
+
+<!-- # match with umap of utterance / cluster label at these turns -->
+<!-- umap_match <- umap |> -->
+<!--   filter(type == "utterance") |> -->
+<!--   select(PID, cluster_label, utterance, umap1, umap2) |> -->
+<!--   group_by(PID, cluster_label, utterance) |> -->
+<!--   summarize(umap1_utterance = mean(umap1), -->
+<!--             umap2_utterance = mean(umap2)) -->
+
+<!-- # merge -->
+<!-- umap_summary <- merge(cluster_mention, umap_match, by = c("PID", "utterance", "cluster_label")) -->
+
+<!-- # check join -->
+<!-- anti_join(umap_summary, cluster_mention) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # summarize to get average first and last UMAP per cluster_label -->
+<!-- umap_first <- umap_match |> -->
+<!--   ungroup() |> -->
+<!--   filter(utterance_type == "first") |> -->
+<!--   group_by(cluster_label) |> -->
+<!--   summarize(umap1_first_avg = mean(umap1), -->
+<!--             umap2_first_avg = mean(umap2)) -->
+
+<!-- umap_last <- umap_match |> -->
+<!--   ungroup() |> -->
+<!--   filter(utterance_type == "last") |> -->
+<!--   group_by(cluster_label) |> -->
+<!--   summarize(umap1_last_avg = mean(umap1), -->
+<!--             umap2_last_avg = mean(umap2)) -->
+
+<!-- # summary -->
+<!-- umap_summary <- merge(umap_first, umap_last, by = "cluster_label") -->
+
+<!-- # transform -->
+<!-- umap_summary <- umap_summary |> -->
+<!--   gather(key = "time", value = "value", -cluster_label) |> -->
+<!--   separate(time, into = c("umap","turn"), sep = "_") |> -->
+<!--   spread(key = "umap", value = "value") -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # plot -->
+<!-- ggplot(data = umap_summary, aes(x = umap1, y = umap2,  -->
+<!--                                 group = cluster_label, color = cluster_label, shape = turn)) + -->
+<!--   geom_point() + -->
+<!--   geom_line() + -->
+<!--   theme_cowplot() + -->
+<!--   theme(legend.position = "none") -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- # first and last mention of cluster label per participant -->
+<!-- cluster_mention <- umap |> -->
+<!--   select(PID, cluster_label, scaled_turn_id, umap1, umap2) |> -->
+<!--   group_by(PID, cluster_label) |> -->
+<!--   summarize(umap1_first = umap1[which.min(scaled_turn_id)], -->
+<!--             umap1_last = umap1[which.max(scaled_turn_id)], -->
+<!--             umap2_first = umap2[which.min(scaled_turn_id)], -->
+<!--             umap2_last = umap2[which.max(scaled_turn_id)]) -->
+
+<!-- # now average across participants -->
+<!-- cluster_mention_summary <- cluster_mention |> -->
+<!--   group_by(cluster_label) |> -->
+<!--   summarize(umap1_first_avg = mean(umap1_first), -->
+<!--             umap1_last_avg = mean(umap1_last), -->
+<!--             umap2_first_avg = mean(umap2_first), -->
+<!--             umap2_last_avg = mean(umap2_last)) |> -->
+<!--   gather(key = "time", value = "value", -cluster_label) |> -->
+<!--   separate(time, into = c("umap","turn"), sep = "_") |> -->
+<!--   spread(key = "umap", value = "value") -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # plot! -->
+<!-- ggplot(data = cluster_mention_summary, aes(x = umap1, y = umap2, group = cluster_label, color = cluster_label)) + -->
+<!--   facet_wrap(.~cluster_label, nrow = 5, scales = "free") + -->
+<!--   geom_point() + -->
+<!--   geom_line() + -->
+<!--   theme(legend.position = "none") -->
+
+<!-- ggplot(result, aes(x = map1, y = map2, group = label, color = label)) + -->
+<!--   geom_point() + -->
+<!--   geom_line() + -->
+<!--   labs(x = "Map1", y = "Map2", title = "First and Last Map Values for Each Label") + -->
+<!--   theme_minimal() -->
+<!-- ``` -->
 
 
 

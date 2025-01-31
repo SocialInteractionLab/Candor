@@ -18,6 +18,8 @@ corpus <- read_csv(here("../data/sim_fixed.csv")) %>%
   ungroup()
 ```
 
+
+
 ```{r}
 corpus %>%
   ggplot(aes(x = scaled_turn_id, y= topic_cluster_similarity)) +
