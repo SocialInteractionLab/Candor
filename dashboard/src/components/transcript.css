@@ -1,0 +1,32 @@
+/* Scrollbox styles */
+.bg-white {
+  background-color: white;
+}
+
+.p-4 {
+  padding: 1rem;
+}
+
+.rounded {
+  border-radius: 0.25rem;
+}
+
+.shadow-lg {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+.w-full {
+  width: 100%;
+}
+
+.h-\[50vh\] {
+  height: 50vh;
+}
+
+.overflow-y-auto {
+  overflow-y: auto;
+}
+
+.message-item {
+  margin-bottom: 0.5rem;
+} 
