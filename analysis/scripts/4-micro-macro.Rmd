@@ -8,6 +8,11 @@ date: "2025-01-29"
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(here)
+library(cowplot)
+library(viridis)
+library(gganimate)
+library(philentropy)
+library(lsa)
 ```
 
 ```{r read-data}
@@ -15,6 +20,15 @@ corpus <- read_csv(here("../data/sim_fixed.csv")) %>%
   group_by(PID, transcript_id, topic_order) %>%
   mutate(within_topic_turn = 1:n(),
          scaled_within_topic_turn = round(within_topic_turn/n(), 1)) %>%
+  ungroup()
+
+tsne <- read_csv(here("../data/topic_cluster_utterance_tsne.csv"))
+
+tsne_wide <- tsne %>%
+  select(-embeddings, -pca_embeddings) %>%
+  pivot_wider(values_from = c('tsne1', 'tsne2'), names_from = 'embedding_type') %>%   group_by(PID, transcript_id, topic_order) |>
+  mutate(within_topic_turn = 1:n(),
+         scaled_within_topic_turn = round(within_topic_turn/n(), 1)) |>
   ungroup()
 ```
 
@@ -44,7 +58,163 @@ corpus %>%
 ```
 
 ```{r}
-corpus %>%
+tsne_wide %>%
+  filter(transcript_id == "d95bc9f7-9831-4039-9b7b-59f9d4b4ddcb",
+         PID == "[False, '5ad41051a010190001b3755d', None]") %>%
+  group_by(scaled_turn_id, topic_order) %>%
+  summarise(tsne1_embeddings_utterance = mean(tsne1_embeddings_utterance),
+            tsne2_embeddings_utterance = mean(tsne2_embeddings_utterance)) %>%
+  ggplot(aes(x = tsne1_embeddings_utterance,
+             y = tsne2_embeddings_utterance, 
+             color = scaled_turn_id, 
+             group = topic_order)) +
+  geom_path(aes(color = scaled_turn_id)) +
+  facet_wrap(~topic_order)
+
+all_plot <- tsne_wide %>%
+  mutate(convo_chunk = cut(scaled_turn_id, breaks = 8)) %>%
+  ggplot(aes(x = tsne1_embeddings_utterance,
+             y = tsne2_embeddings_utterance,
+             group = convo_chunk)) +
+  facet_wrap(~convo_chunk, ncol = 8) +
+  geom_density_2d(contour_var = "ndensity", colour = "#336695") +
+  xlab("T-SNE first dimension") +
+  ylab("T-SNE second dimension") +
+  theme_minimal()
+
+ggsave(here("../output/topo_topics_overall.svg"), all_plot, height = 2, width = 9, dpi = 600)
+
+plot <- tsne_wide %>%
+  filter(cluster_label %in% c("family",
+                        "television, movies",
+                        "music, instruments")) %>%
+  mutate(within_topic_chunk = cut(scaled_within_topic_turn, breaks = 8)) %>%
+  ggplot(aes(x = tsne1_embeddings_utterance,
+             y = tsne2_embeddings_utterance)) +
+  geom_density_2d(contour_var = "ndensity", colour = "#336695") +
+  xlab("T-SNE first dimension") +
+  ylab("T-SNE second dimension") +
+  facet_grid(cluster_label~within_topic_chunk) +
+  theme_minimal() 
+
+ggsave(here("../output/topo_topics.svg"), plot, height = 3.5, width = 9, dpi = 600)
+
+```
+
+```{r animate}
+anim <- tsne_wide %>%
+  mutate(within_topic_chunk = cut(scaled_within_topic_turn, breaks = 6,
+                                  labels = c("section 1",
+                                             "section 2",
+                                             "section 3",
+                                             "section 4",
+                                             "section 5",
+                                             "section 6"))) %>%
+  ggplot(aes(x = tsne1_embeddings_utterance,
+             y = tsne2_embeddings_utterance)) +
+  geom_density_2d_filled(contour_var = "ndensity") +
+  xlab("T-SNE first dimension") +
+  ylab("T-SNE second dimension") +
+  facet_wrap(~cluster_label) +
+  theme_void() +
+  transition_time(scaled_within_topic_turn)
+
   
+anim_save("../output/topic_exploration_fill.gif", anim)
+
+```
+
+```{r}
+resampled_overall <- tsne_wide %>%
+  select(turn_id, transcript_id, scaled_turn_id, speaker,
+         tsne1_embeddings_utterance, tsne2_embeddings_utterance) %>%
+  distinct() %>%
+  rowwise() %>%
+  mutate(utterance_embedding = list(c(tsne1_embeddings_utterance,
+                                 tsne2_embeddings_utterance))) %>%
+  group_by(scaled_turn_id) %>%
+  mutate(resampled_utt_embedding = sample(utterance_embedding)) %>%
+  ungroup() %>%
+  unnest_wider(resampled_utt_embedding, names_sep = "_") %>%
+  rowwise() %>%
+  mutate(sim = cosine(c(tsne1_embeddings_utterance,
+                        tsne2_embeddings_utterance),
+                      c(resampled_utt_embedding_1,
+                        resampled_utt_embedding_2)))
+
+
+resampled_overall %>%
+  ggplot(aes(x = scaled_turn_id, y = sim)) +
+  geom_smooth()
+
+resampled_topics <- tsne_wide %>%
+  rowwise() %>%
+  mutate(utterance_embedding = list(c(tsne1_embeddings_utterance,
+                                 tsne2_embeddings_utterance))) %>%
+  group_by(cluster_label,scaled_within_topic_turn) %>%
+  mutate(resampled_utt_embedding = sample(utterance_embedding)) %>%
+  ungroup() %>%
+  unnest_wider(resampled_utt_embedding, names_sep = "_") %>%
+  rowwise() %>%
+  mutate(sim = cosine(c(tsne1_embeddings_utterance,
+                        tsne2_embeddings_utterance),
+                      c(resampled_utt_embedding_1,
+                        resampled_utt_embedding_2)))
+
+resampled_topics  %>%
+  ggplot(aes(x = scaled_within_topic_turn, y = sim)) +
+  geom_smooth()
+
+```
+
+```{r model}
+overall_model <- lm(sim ~ scaled_turn_id + I(scaled_turn_id^2), 
+                    data = resampled_overall)
+
+summary(overall_model)
+
+predicted_sims <- predict(
+  overall_model, 
+  newdata = data.frame(
+    scaled_turn_id = seq(0,1, 
+                      length.out = 100
+                      )
+    )
+  )
+
+preds <- data.frame(predicted_sims, time = seq(0,1, 
+          length.out = 100))
+
+# Plot the predicted sims
+ggplot(preds, aes(x = time, y = predicted_sims)) +
+  geom_point()
+
+
+within_topic_model <- lm(sim ~ scaled_within_topic_turn + 
+                           I(scaled_within_topic_turn^2), 
+                    data = resampled_topics)
+
+summary(within_topic_model)
+
+topic_predicted_sims <- predict(
+  within_topic_model, 
+  newdata = data.frame(
+    scaled_within_topic_turn = seq(0,1, 
+                      length.out = 100
+                      )
+    )
+  )
+
+topic_preds <- data.frame(topic_predicted_sims, time = seq(0,1, 
+          length.out = 100))
+
+# Plot the data points and the predicted scores
+ggplot(topic_preds, aes(x = time, y = topic_predicted_sims)) +
+  geom_point()
+```
+```{r entropy}
+entropy <- tsne_wide %>%
+  select(turn_id, transcript_id, scaled_turn_id, speaker, cluster_label) %>%
+  distinct() %>%
 
 ```
