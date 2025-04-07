@@ -217,7 +217,9 @@ async function getFile(fileNumber) {
             const jsonData = JSON.parse(data);
             jsonData.count = 0;
             await fs.writeFile(filePath, JSON.stringify(jsonData, null, 2), 'utf8');
-            throw new Error('Count exceeds the number of available files.');
+            // Reset count and start over from beginning
+            // count = 0;
+            console.log('Count reset to 0 - starting over from beginning');
         }
 
         const file = {
