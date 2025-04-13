@@ -16,9 +16,6 @@ function App() {
             <Title order={2} align="center" mb="md">
               Candor Annotation Data
             </Title>
-            <Container size="xl" style={{ padding: "20px", marginBottom: "30px", backgroundColor: "#f8f9fa", borderRadius: "8px" }}>
-              TODO: some summary data here
-            </Container>
             <TableSort />
           </Container>
         } />

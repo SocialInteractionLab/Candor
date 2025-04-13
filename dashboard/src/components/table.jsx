@@ -9,6 +9,7 @@ import {
   Table,
   Text,
   TextInput,
+  Container,
   UnstyledButton,
 } from '@mantine/core';
 import classes from './TableSort.module.css';
@@ -48,17 +49,17 @@ function sortData(data, payload) {
 
   return filterData(
     [...data].sort((a, b) => {
-      if (sortBy === 'number_annotators') {
-        // Convert to numbers for numeric comparison
-        const aNum = Number(a[sortBy]);
-        const bNum = Number(b[sortBy]);
-        return payload.reversed ? bNum - aNum : aNum - bNum;
+      if (sortBy === 'transcript_id') {
+        // Use string comparison for other columns
+        if (payload.reversed) {
+          return b[sortBy].localeCompare(a[sortBy]);
+        }
+        return a[sortBy].localeCompare(b[sortBy]);
       }
-      // Use string comparison for other columns
-      if (payload.reversed) {
-        return b[sortBy].localeCompare(a[sortBy]);
-      }
-      return a[sortBy].localeCompare(b[sortBy]);
+      // Convert to numbers for numeric comparison
+      const aNum = Number(a[sortBy]);
+      const bNum = Number(b[sortBy]);
+      return payload.reversed ? bNum - aNum : aNum - bNum;
     }),
     payload.search
   );
@@ -73,13 +74,13 @@ export function TableSort() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Load and parse the CSV file
-    fetch('/src/data/sample.csv')
+    fetch('/src/data/transcript_summary_data.csv')
       .then(response => response.text())
       .then(csvString => {
         const result = Papa.parse(csvString, {
           header: true,
-          skipEmptyLines: true
+          skipEmptyLines: true,
+          dynamicTyping: true
         });
         setData(result.data);
         setSortedData(result.data);
@@ -104,29 +105,34 @@ export function TableSort() {
   const headers = data.length > 0 ? Object.keys(data[0]) : [];
 
   const handleRowClick = (row) => {
-    // You can use any unique identifier from your row data
-    // For example, if you have an 'id' field:
     const id = row.id || Object.values(row)[0]; // Fallback to first value if no id
     navigate(`/details/${id}`, { state: { rowData: row } });
   };
 
-  const rows = sortedData.map((row, index) => (
-    <Table.Tr 
-      key={index} 
-      onClick={() => handleRowClick(row)} 
-      style={{ cursor: 'pointer' }}
-      className={classes.tableRow}
-    >
-      {headers.map((header) => (
-        <Table.Td key={header}>{row[header]}</Table.Td>
-      ))}
-    </Table.Tr>
-  ));
+  const rows = sortedData.map((row, index) => {
+    return (
+      <Table.Tr 
+        key={index} 
+        onClick={() => handleRowClick(row)} 
+        style={{ cursor: 'pointer' }}
+        className={classes.tableRow}
+      >
+        {headers.map((header) => (
+          header !== 'annotators' ? (
+            <Table.Td key={header}>{row[header]}</Table.Td>
+          ) : null
+        ))}
+      </Table.Tr>
+    );
+  });
 
   return (
     <>
+      <Container size="xl" style={{ padding: "20px", marginBottom: "30px", backgroundColor: "#f8f9fa", borderRadius: "8px" }}>
+             {`Total number of transcripts: ${data.length} | Total number of annotators: ${data.reduce((sum, row) => sum + row.number_annotators, 0)}`}
+      </Container>
       <TextInput
-        placeholder="Search by any field"
+        placeholder="Search by transcript ID"
         mb="md"
         leftSection={<IconSearch size={16} stroke={1.5} />}
         value={search}
@@ -136,7 +142,7 @@ export function TableSort() {
         <Table horizontalSpacing="md" verticalSpacing="xs" miw={700} layout="fixed">
           <Table.Tbody>
             <Table.Tr>
-              {headers.map((header) => (
+              {headers.map((header) => (header !== 'annotators' ?
                 <Th
                   key={header}
                   sorted={sortBy === header}
@@ -144,7 +150,7 @@ export function TableSort() {
                   onSort={() => setSorting(header)}
                 >
                   {header.charAt(0).toUpperCase() + header.slice(1)}
-                </Th>
+                </Th> : null
               ))}
             </Table.Tr>
           </Table.Tbody>

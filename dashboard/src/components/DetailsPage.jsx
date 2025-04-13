@@ -119,7 +119,7 @@ export function DetailsPage() {
     
     try {
       // The annotators are stored as a string representation of an array
-      // We need to parse it to get the actual array
+      // need to parse
       const annotatorString = rowData.annotators;
       const annotators = JSON.parse(annotatorString.replace(/"/g, '"'));
       
@@ -144,13 +144,12 @@ export function DetailsPage() {
               );
               setIndividualData(filtered);
 
-              // Fix for participant matchrate
               const matchrate = consensusMatchrate.find(item => item.PID === value && item.transcript_id === id);
               console.log("Matchrate:", matchrate);
               if (matchrate) {
                 setParticipantMatchrate(matchrate.match_rate); // Access the specific matchrate property
               } else {
-                setParticipantMatchrate(null); // Set to null if not found
+                setParticipantMatchrate(null);
                 console.log("No matchrate found for this participant and transcript");
               }
               console.log("Filtered data:", filtered);
@@ -173,7 +172,7 @@ export function DetailsPage() {
     const timelineData = folderData.content.map((turn, index) => ({
       index,
       turnId: turn.Number || index + 1,
-      value: 1, // Base value for visualization
+      value: 1,
       speaker: turn.speaker,
       text: turn.utterance?.substring(0, 30) + (turn.utterance?.length > 30 ? '...' : '')
     }));
@@ -254,7 +253,6 @@ export function DetailsPage() {
             {individualData && (
               <>
                 <Text>Total annotations: {individualData.length}</Text>
-                <Text>Annotated turns: {new Set(individualData.map(item => item.turn_id)).size}</Text>
                 {participantMatchrate !== null && (
                   <Text>Matchrate: {participantMatchrate.toFixed(2)}</Text>
                 )}
@@ -271,7 +269,7 @@ export function DetailsPage() {
             <Paper p="md" withBorder mb="md">
               <Title order={4} mb="md">Annotation Timeline for {annotator}</Title>
               <Text size="sm" mb="md">Highlighted lines show annotated turns. Click on any point to navigate to that turn.</Text>
-              <div style={{ width: '100%', height: 200 }}>
+              <div style={{ width: '100%', height: 100 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={timelineData}
@@ -302,7 +300,7 @@ export function DetailsPage() {
               <Box mt="xs">
                 <Flex gap="md" align="center">
                   <Box w={16} h={2} bg="red" />
-                  <Text size="xs">Annotator's selections</Text>
+                  <Text size="xs">Annotation</Text>
                   <Box w={16} h={2} bg="green" style={{ borderStyle: 'dashed', borderWidth: '0 0 2px 0' }} />
                   <Text size="xs">Consensus turns</Text>
                 </Flex>
@@ -312,7 +310,7 @@ export function DetailsPage() {
             <Paper p="md" withBorder mb="md">
               <Title order={4} mb="md">Annotation Timeline</Title>
               <Text size="sm" mb="md">Highlighted lines show annotated turns. Click on any point to navigate to that turn.</Text>
-              <div style={{ width: '100%', height: 200 }}>
+              <div style={{ width: '100%', height: 100 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={timelineData}
@@ -343,7 +341,7 @@ export function DetailsPage() {
               <Box mt="xs">
                 <Flex gap="md" align="center">
                   <Box w={16} h={2} bg="red" />
-                  <Text size="xs">Annotator's selections</Text>
+                  <Text size="xs">Annotation</Text>
                   <Box w={16} h={2} bg="green" style={{ borderStyle: 'dashed', borderWidth: '0 0 2px 0' }} />
                   <Text size="xs">Consensus turns</Text>
                 </Flex>
@@ -351,9 +349,7 @@ export function DetailsPage() {
             </Paper>
           )}
           
-          {/* Transcript viewer */}
-          <Paper p="md" withBorder ref={transcriptRef} style={{ height: 'calc(100vh - 400px)', overflowY: 'auto' }}>
-            <Title order={4} mb="md">Transcript</Title>
+          <Paper p="md" withBorder ref={transcriptRef}>
             <TranscriptViewer 
               transcriptData={folderData} 
               loading={loading} 

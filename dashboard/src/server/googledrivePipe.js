@@ -69,7 +69,7 @@ loadCache()
   });
 
 const auth = new google.auth.GoogleAuth({
-    keyFile: './deep-mark-421119-d6b7a348b287.json',
+    keyFile: path.join(__dirname, 'deep-mark-421119-d6b7a348b287.json'),
     scopes: ['https://www.googleapis.com/auth/drive']
 });
 
