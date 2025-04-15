@@ -34,6 +34,7 @@ export function World() {
 
   const [turnIds, setTurnIds] = useState([]);
 
+  const [startTopic, setStartTopic] = useState(game.get("startTopic") ?? ""); // starting topic (previously "Starting the Call") for complete coverage
 
   // set up scroll
   useEffect(() => {
@@ -285,46 +286,19 @@ export function World() {
 
         {showInput && (
           <div className="w-[25%] flex flex-col items-center">
-            <Chat
-              currentUtterance={data[currentIndex]}
-              currentIndex={currentIndex}
-              handleNewMessage={handleNewMessage}
-              setShowInput={setShowInput}
-              annotated={annotated}
-            />
+            <div className="flex flex-col items-center justify-center ml-4 h-full w-full">
+              <div className="w-full mt-4">
+                <InputForm
+                  onNewMessage={handleNewMessage}
+                  currentUtterance={data[currentIndex]}
+                  setShowInput={setShowInput}
+                  annotated={annotated}
+                  currentIndex={currentIndex}
+                />
+              </div>
+            </div>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function Chat({
-  currentUtterance,
-  currentIndex,
-  handleNewMessage,
-  setShowInput,
-  annotated,
-}) {
-  const player = usePlayer();
-  const game = useGame();
-  const playerName = usePlayerID();
-  const scope = game;
-
-  if (!scope || !player) {
-    return <Loading />;
-  }
-
-  return (
-    <div className="flex flex-col items-center justify-center ml-4 h-full w-full">
-      <div className="w-full mt-4">
-        <InputForm
-          onNewMessage={handleNewMessage}
-          currentUtterance={currentUtterance}
-          setShowInput={setShowInput}
-          annotated={annotated}
-          currentIndex = {currentIndex}
-        />
       </div>
     </div>
   );
