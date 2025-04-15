@@ -199,7 +199,7 @@ async function listAllFiles(query) {
 async function getFile(fileNumber) {
     try {
         await auth.getAccessToken();
-        const allFiles = await listAllFiles("name = 'transcript_backbiter.csv'");
+        const allFiles = await listAllFiles("name = 'transcript_backbiter_transformed.csv'");
         if (!allFiles || allFiles.length === 0) {
             throw new Error('No files found with the specified query.');
         }

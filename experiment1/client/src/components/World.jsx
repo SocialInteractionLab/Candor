@@ -15,6 +15,9 @@ import "./textbubble.css";
 export function World() {
   const game = useGame();
   const data = game.get("data");
+
+  const speaker1 = data[0].speaker; // speaker 1 for message sequence purposes
+
   const player = usePlayer();
   const playerName = usePlayerID();
 
@@ -31,7 +34,6 @@ export function World() {
 
   const [turnIds, setTurnIds] = useState([]);
 
-  // console.log(data);
 
   // set up scroll
   useEffect(() => {
@@ -223,6 +225,8 @@ export function World() {
                 <Message
                   index={d.turn_id}
                   utterance={d.utterance}
+                  speaker1 = {speaker1}
+                  currentSpeaker = {d.speaker}
                   isMarked={isMarked(d.turn_id - 2)}
                   currentIndex={currentIndex}
                   handleMarkToggle={handleMarkToggle}

@@ -4,17 +4,13 @@ import { useGame } from "@empirica/core/player/classic/react";
 //*
 // Message is a component for displaying message and annotation history
 //*
-const Message = ({ index, utterance, isMarked, currentIndex, handleMarkToggle, handleUtteranceClick, clickable, annotatedData, removeItem }) => {
+const Message = ({ index, utterance, speaker1, currentSpeaker, isMarked, currentIndex, handleMarkToggle, handleUtteranceClick, clickable, annotatedData, removeItem }) => {
     const [prevTopic, setPrevTopic] = useState('');
     const [newTopic, setNewTopic] = useState('');
     const [anotateIndex, setAnotateIndex] = useState(undefined)
     const [isAnnotated, setIsAnnotated] = useState(false);
 
     const game = useGame();
-    // const scope = game; 
-    // const attribute = "chat";
-    // const playerStageData = scope.getAttribute(attribute)?.items || [];
-
 
     useEffect(() => {
         const checkTopic = () => {
@@ -49,7 +45,7 @@ const Message = ({ index, utterance, isMarked, currentIndex, handleMarkToggle, h
         });
     }
 
-    const messageClass = `${index % 2 === 0 ? "bubble-left" : "bubble-right"} 
+    const messageClass = `${currentSpeaker === speaker1 ? "bubble-left" : "bubble-right"} 
     ${clickable ? "cursor-pointer" : ""} 
     ${isMarked ? "bg-gray-200 text-red-500 transform translate-y-1 shadow-inner" : "bg-white"}`;
 
@@ -59,7 +55,7 @@ const Message = ({ index, utterance, isMarked, currentIndex, handleMarkToggle, h
     };
 
     return (
-        <div className={`flex flex-col ${index % 2 === 0 ? "items-start" : "items-end"} ${index === currentIndex && 'bg-slate-200'} w-full p-4`}>
+        <div className={`flex flex-col ${currentSpeaker === speaker1? "items-start" : "items-end"} ${index === currentIndex && 'bg-slate-200'} w-full p-4`}>
           {
             index == 0 && (
               <div className="flex items-center justify-between text-sm text-gray-500 mb-2 max-w-[80%]">
@@ -85,7 +81,7 @@ const Message = ({ index, utterance, isMarked, currentIndex, handleMarkToggle, h
     </div>
   )}
   <div
-    className={`${messageClass} ${index % 2 === 0 ? "self-start" : "self-end"}`}
+    className={`${messageClass} ${currentSpeaker === speaker1 ? "self-start" : "self-end"}`}
     onClick={clickable ? handleClick : undefined}
   >
     <p className={`text-lg ${index === currentIndex ? 'font-bold' : ''}`}>{utterance}</p>
