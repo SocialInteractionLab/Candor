@@ -120,7 +120,7 @@ export function World() {
 
     // no prev have after
     if (!newMessages[index - 1] && newMessages[index + 1]) {
-      newMessages[index + 1].previous_topic = "Starting The Call";
+      newMessages[index + 1].previous_topic = game.get("startTopic");
     }
     // have prev no after
     else if (newMessages[index - 1] && !newMessages[index + 1]) {
@@ -152,14 +152,21 @@ export function World() {
     let currentUtterance = data[currentIndex];
     let isRepeat = false;
     let newMessages = [...annotated];
-
-    newMessages.forEach((msg) => {
-      if (currentUtterance.turn_id === msg.turn_id) {
-        msg.previous_topic = prevtopic;
-        msg.new_topic = newtopic;
-        isRepeat = true;
+    
+    // Find the index of the message with matching turn_id
+    const messageIndex = newMessages.findIndex(msg => currentUtterance.turn_id === msg.turn_id);
+    
+    // If found, update the existing message
+    if (messageIndex !== -1) {
+      newMessages[messageIndex].previous_topic = prevtopic;
+      newMessages[messageIndex].new_topic = newtopic;
+      isRepeat = true;
+      
+      // If this isn't the last message, update the next message's previous_topic
+      if (messageIndex < newMessages.length - 1) {
+        newMessages[messageIndex + 1].previous_topic = newtopic;
       }
-    });
+    }
 
     if (!isRepeat) {
       handleMarkToggle(currentIndex);
@@ -172,6 +179,17 @@ export function World() {
         participent_id: playerName,
         time: Date.now(),
       });
+      
+      // Sort messages by turn_id to ensure proper ordering
+      newMessages.sort((a, b) => a.turn_id - b.turn_id);
+      
+      // Find the new index after sorting
+      const newIndex = newMessages.findIndex(msg => currentUtterance.turn_id === msg.turn_id);
+      
+      // If this isn't the last message, update the next message's previous_topic
+      if (newIndex < newMessages.length - 1) {
+        newMessages[newIndex + 1].previous_topic = newtopic;
+      }
     }
 
     setAnnotated(newMessages);
@@ -289,6 +307,8 @@ export function World() {
             <div className="flex flex-col items-center justify-center ml-4 h-full w-full">
               <div className="w-full mt-4">
                 <InputForm
+                  // startTopic={startTopic}
+                  setAnnotated={setAnnotated}
                   onNewMessage={handleNewMessage}
                   currentUtterance={data[currentIndex]}
                   setShowInput={setShowInput}

@@ -9,8 +9,9 @@ const Message = ({ index, utterance, speaker1, currentSpeaker, isMarked, current
     const [newTopic, setNewTopic] = useState('');
     const [anotateIndex, setAnotateIndex] = useState(undefined)
     const [isAnnotated, setIsAnnotated] = useState(false);
-
     const game = useGame();
+
+    // const [startTopic, setStartTopic] = useState(game.get("startTopic")??'');
 
     useEffect(() => {
         const checkTopic = () => {
@@ -31,7 +32,8 @@ const Message = ({ index, utterance, speaker1, currentSpeaker, isMarked, current
         };
 
         checkTopic();
-    }, [index, game, annotatedData]);
+
+    }, [index, game, annotatedData, game.get("startTopic")]);
 
     const handleDelete = () => {
         annotatedData.forEach((msg,i) => {
@@ -60,7 +62,7 @@ const Message = ({ index, utterance, speaker1, currentSpeaker, isMarked, current
             index == 0 && (
               <div className="flex items-center justify-between text-sm text-gray-500 mb-2 max-w-[80%]">
       <div className="flex-1 truncate">
-        <span className="mr-2">Starting Topic: Starting The Call</span>
+        <span className="mr-2">Starting Topic: {game.get("startTopic")}</span>
       </div>
     </div>
             )
@@ -69,7 +71,7 @@ const Message = ({ index, utterance, speaker1, currentSpeaker, isMarked, current
     <div className="flex items-center justify-between text-sm text-gray-500 mb-2 max-w-[80%]">
       <div className="flex-1 truncate">
         <span className="mr-2">{`#${anotateIndex}`} |</span>
-        <span>Previous Topic: {prevTopic === '' ? 'Starting The Call' : prevTopic} | </span>
+        <span>Previous Topic: {prevTopic === '' ? game.get("startTopic") : prevTopic} | </span>
         <span>New Topic: {newTopic}</span>
       </div>
       <button 

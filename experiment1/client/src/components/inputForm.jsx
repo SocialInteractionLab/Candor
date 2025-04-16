@@ -10,6 +10,8 @@ import {
 // InputForm is a component for typing and sending messages
 //*
 export function InputForm({
+  // startTopic,
+  setAnnotated,
   onNewMessage,
   currentUtterance,
   setShowInput,
@@ -23,13 +25,33 @@ export function InputForm({
   const [newtopic, setNewtopic] = useState("");
   const inputRef = useRef();
 
+  const [startTopic, setStartTopic] = useState("");
+
   const handleSubmit = (e) => {
     e.preventDefault();
     onNewMessage(prevtopic, newtopic);
     setPrevtopic("");
     setNewtopic("");
     setIsSubmitted(true);
+    console.log(game.get("messages"));
   };
+
+  const handleStartTopicSubmit = (e) => {
+    e.preventDefault();
+    if (startTopic !== "") {
+      game.set("startTopic", startTopic);
+    }
+    setStartTopic("");
+    const messages = game.get("messages");
+    if (messages && messages.length > 1) {
+      const newMessages = [...messages];
+      newMessages[0] = { ...newMessages[0], previous_topic: startTopic };
+      setAnnotated(newMessages);
+      game.set("messages", newMessages);
+    }
+
+    console.log(game.get("messages"));
+  }
 
   const handleExit = (e) => {
     setShowInput(false);
@@ -41,15 +63,15 @@ export function InputForm({
     if (arr) {
       arr.sort((a, b) => a.turn_id - b.turn_id);
     } else {
-      return "Starting The Call";
+      return game.get("startTopic");
     }
 
     if (!arr[0]) {
-      return "Starting The Call";
+      return game.get("startTopic");
     }
 
     if (Number(arr[0].turn_id) >= val) {
-      return "Starting The Call";
+      return game.get("startTopic");
     }
 
     let low = 0;
@@ -94,7 +116,7 @@ export function InputForm({
         </button>
       </div>
 
-      <form className="max-w-sm mx-auto" onSubmit={undefined}>
+      <form className="max-w-sm mx-auto" onSubmit={handleStartTopicSubmit}>
           <p className="mb-4 text-base text-gray-700 dark:text-gray-300">This is a prefilled starting topic to help with data completeness, it can not be changed.</p>
           <div className="mb-5">
             <label
@@ -112,9 +134,9 @@ export function InputForm({
              dark:focus:ring-blue-500 dark:focus:border-blue-500
              disabled:bg-gray-200 disabled:text-gray-400 disabled:border-gray-400 
              dark:disabled:bg-gray-600 dark:disabled:text-gray-500 dark:disabled:border-gray-500"
-              value={'Starting The Call'}
+              value={startTopic}
               ref={inputRef}
-              disabled={true}
+              onChange={(e) => setStartTopic(e.target.value)}
               required
             />
           </div>
