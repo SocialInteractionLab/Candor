@@ -24,7 +24,7 @@ export function World() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [markedIndices, setMarkedIndices] = useState([]);
 
-  const [showInput, setShowInput] = useState(false);
+  const [showInput, setShowInput] = useState(true); // start with true cuz user input for the start topic is required
   const [annotated, setAnnotated] = useState(game.get("messages") || []);
 
   const [finishScroll, setFinishScroll] = useState(false);
@@ -33,8 +33,6 @@ export function World() {
   const scrollRef = useRef(null);
 
   const [turnIds, setTurnIds] = useState([]);
-
-  const [startTopic, setStartTopic] = useState(game.get("startTopic") ?? ""); // starting topic (previously "Starting the Call") for complete coverage
 
   // set up scroll
   useEffect(() => {
