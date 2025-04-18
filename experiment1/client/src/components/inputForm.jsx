@@ -30,7 +30,10 @@ export function InputForm({
 
   // Check if starting topic is already submitted
   useEffect(() => {
-    setStartTopicSubmitted(!!game.get("startTopicSubmitted"));
+    const topic = game.get("startTopic");
+    if (topic) {
+      setStartTopicSubmitted(true);
+    }
   }, [game]);
 
   const handleSubmit = (e) => {
@@ -44,21 +47,27 @@ export function InputForm({
 
   const handleStartTopicSubmit = (e) => {
     e.preventDefault();
-    if (startTopic !== "") {
-      game.set("startTopic", startTopic);
-      game.set("startTopicSubmitted", true);
-      setStartTopicSubmitted(true);
-    }
     
-    const messages = game.get("messages");
-    if (messages && messages.length > 1) {
-      const newMessages = [...messages];
-      newMessages[0] = { ...newMessages[0], previous_topic: startTopic };
-      setAnnotated(newMessages);
-      game.set("messages", newMessages);
-    }
-
-    console.log(game.get("messages"));
+    if (startTopic === "") return;
+  
+    setStartTopicSubmitted(true);
+    
+    game.set("startTopic", startTopic);
+    
+    setTimeout(() => {
+      game.set("startTopicSubmitted", true);
+      
+      // Only update messages after another delay if needed
+      setTimeout(() => {
+        const messages = game.get("messages") || [];
+        if (messages.length > 0) {
+          const newMessages = [...messages];
+          newMessages[0] = { ...newMessages[0], previous_topic: startTopic };
+          setAnnotated(newMessages);
+          game.set("messages", newMessages);
+        }
+      }, 1000); 
+    }, 1000);
   }
 
   const handleExit = (e) => {
