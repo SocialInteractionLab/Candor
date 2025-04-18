@@ -199,7 +199,7 @@ async function listAllFiles(query) {
 async function getFile(fileNumber) {
     try {
         await auth.getAccessToken();
-        const allFiles = await listAllFiles("name = 'transcript_backbiter_transformed.csv'");
+        const allFiles = await listAllFiles("name = 'transcript_backbiter_transformed_noLine1.csv'");
         if (!allFiles || allFiles.length === 0) {
             throw new Error('No files found with the specified query.');
         }
@@ -212,7 +212,7 @@ async function getFile(fileNumber) {
         }
         // changed for dense subset
         // allFiles.length
-        if (count >= 200) {
+        if (count >= 1455) {
             const data = await fs.readFile(filePath, 'utf8');
             const jsonData = JSON.parse(data);
             jsonData.count = 0;

@@ -141,7 +141,7 @@ export function World() {
     setAnnotated(newMessages);
 
     game.set("messages", newMessages);
-    console.log(game.get("messages"));
+    // console.log(game.get("messages"));
   };
 
 
@@ -208,7 +208,7 @@ export function World() {
     }
   };
 
-  console.log("currIndex: " + currentIndex);
+  // console.log("currIndex: " + currentIndex);
 
   // end game
   const handleFinish = () => {

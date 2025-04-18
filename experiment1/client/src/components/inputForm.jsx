@@ -42,7 +42,7 @@ export function InputForm({
     setPrevtopic("");
     setNewtopic("");
     setIsSubmitted(true);
-    console.log(game.get("messages"));
+    // console.log(game.get("messages"));
   };
 
   const handleStartTopicSubmit = (e) => {
@@ -116,7 +116,7 @@ export function InputForm({
     if (inputRef.current) {
       setPrevtopic(inputRef.current.value);
     }
-    console.log(prevtopic);
+    // console.log(prevtopic);
   }, [currentUtterance, annotated]);
 
   // Add this useEffect to prevent interaction with other parts of the app
