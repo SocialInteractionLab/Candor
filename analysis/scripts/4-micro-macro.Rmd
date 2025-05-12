@@ -13,6 +13,9 @@ library(viridis)
 library(gganimate)
 library(philentropy)
 library(lsa)
+library(ggrepel)
+library(broom)
+library(geomtextpath)
 ```
 
 ```{r read-data}
@@ -142,10 +145,23 @@ resampled_overall <- tsne_wide %>%
                       c(resampled_utt_embedding_1,
                         resampled_utt_embedding_2)))
 
+resampled_means <- resampled_overall %>%
+  mutate(scaled_turn_id = as.factor(as.character(scaled_turn_id))) %>%
+  group_by(scaled_turn_id) %>%
+  summarise(sim = mean(sim)) %>%
+  ungroup() %>%
+  mutate(scaled_turn_id = (as.numeric(as.character(scaled_turn_id))))
+  
 
-resampled_overall %>%
+sim_convo_plot <- resampled_overall %>%
   ggplot(aes(x = scaled_turn_id, y = sim)) +
-  geom_smooth()
+  geom_smooth(color = "black") +
+  geom_point(data = resampled_means, color = "black") +
+  theme_minimal() +
+  xlab("Progression through entire conversation (proportion complete)") +
+  ylab("Embedding similarity between sampled pairs of dyads")
+
+ggsave(here("../output/sim_over_entire_convos.svg"), sim_convo_plot, height = 4, width = 4, dpi = 600)
 
 resampled_topics <- tsne_wide %>%
   rowwise() %>%
@@ -161,9 +177,39 @@ resampled_topics <- tsne_wide %>%
                       c(resampled_utt_embedding_1,
                         resampled_utt_embedding_2)))
 
-resampled_topics  %>%
+
+example_topics = c("television, movies", "weather", 
+                   "school", "work", 
+                   "election, politics"
+                   )
+summary_data <- resampled_topics %>%
+  select(scaled_within_topic_turn, cluster_label, sim)
+
+topic_means <- resampled_topics %>%
+  mutate(scaled_within_topic_turn = as.factor(as.character(scaled_within_topic_turn))) %>%
+  group_by(scaled_within_topic_turn) %>%
+  summarise(sim = mean(sim)) %>%
+  ungroup() %>%
+  mutate(scaled_within_topic_turn = (as.numeric(as.character(scaled_within_topic_turn))))
+
+my_colors = c("#AADDE1", "#FFD16D", "#1A426D", "#336685", "#F08944")
+
+sim_topic_plot <- resampled_topics  %>%
+  filter(cluster_label %in% example_topics) %>%
   ggplot(aes(x = scaled_within_topic_turn, y = sim)) +
-  geom_smooth()
+  geom_labelsmooth(aes(label = cluster_label, color = cluster_label), method = "loess", linetype = "dotted", hjust= 0) +
+  #geom_smooth(aes(color = cluster_label), linetype = "dotted", se  = F) +
+  scale_color_manual(values = my_colors) +
+  geom_point(data = topic_means, color = "black") +
+  theme_minimal() +
+  geom_smooth(data = summary_data, color = "black") +
+  xlab("Progression through topic (proportion complete)") +
+  ylab("Embedding similarity between sampled pairs of dyads") +
+  theme(legend.position="none")
+
+ggsave(here("../output/sim_over_topics.svg"), sim_topic_plot, height = 4, width = 4, dpi = 600)
+
+ 
 
 ```
 
