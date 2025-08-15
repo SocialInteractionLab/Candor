@@ -1,6 +1,6 @@
-# social-media-dynamics
+# CANDOR
 
-`experiment1` contains [empirica](https://empirica.ly/) code for a simulated social network. 
+`experiment1` contains [empirica](https://empirica.ly/) code for annotation
 
 ## Pre-Reqs
 Ensure you have empirica and the npm packages installed  
