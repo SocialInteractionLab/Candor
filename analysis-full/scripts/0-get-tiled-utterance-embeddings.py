@@ -5,9 +5,9 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # define data input location
-input_dir = "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/CANDOR/transcripts/raw"
+input_dir = "../../../candor_data/all_transcripts.csv"
 # define data output location
-output_dir = "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure/data/output/full-sample"
+output_dir = "../../../output/"
 
 # load pre-trained sentence transformer model (aka SBERT)
 model = SentenceTransformer('all-MiniLM-L6-v2')
