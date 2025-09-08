@@ -5,28 +5,15 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # define data input location
-input_dir = "../../../candor_data/all_transcripts.csv"
+input_file = "../../../candor_data/all_transcripts.csv"
 # define data output location
 output_dir = "../../../output/"
 
 # load pre-trained sentence transformer model (aka SBERT)
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# load all modified transcripts and combine into one data frame
-all_dfs = []
-for dirpath, dirnames, filenames in os.walk(input_dir):
-    for filename in filenames:
-        if filename == 'transcript_backbiter_transformed_noLine1.csv':
-            file_path = os.path.join(dirpath, filename)
-            df = pd.read_csv(file_path)
-            relative_path = os.path.relpath(dirpath, input_dir)
-            transcript_id = relative_path.split(os.sep)[0] if relative_path else ''
-            # add new variable for transcript ID from folder name
-            df['transcript_id'] = transcript_id
-            all_dfs.append(df)
-
 # Concatenate all dataframes by rows (like row bind)
-df = pd.concat(all_dfs, ignore_index=True)
+df = pd.read_csv(input_file)
 
 # only need a few variables from df for tiling
 # turn_id, speaker, transcript_id, utterance
