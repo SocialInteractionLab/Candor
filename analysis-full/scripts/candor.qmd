@@ -1,0 +1,36 @@
+---
+title: "Dynamics of Topic Exploration in Conversation"
+format: 
+  html:
+    code-overflow: wrap
+    toc: true
+    embed-resources: true
+editor: source
+author: Helen Schmidt
+date-modified: today
+theme: flatly
+---
+
+# SETUP
+```{r, setup, include = FALSE, message = FALSE}
+# set script working directory by checking for user (HS home or lab)
+if (Sys.info()[[7]] == "helenschmidt") {
+  knitr::opts_knit$set(root.dir = "/Users/helenschmidt/Library/CloudStorage/GoogleDrive-helenschmidt129@gmail.com/My Drive/SANLab/Experiments/Conversation-Structure")
+} else if (Sys.info()[[7]] == "tuo70125") {
+  knitr::opts_knit$set(root.dir = "/Users/tuo70125/My Drive/SANLab/Experiments/Conversation-Structure")}
+```
+
+```{r, packages, include = FALSE, message = FALSE}
+# packages
+library(Rmisc)           # summary statistics
+library(patchwork)       # combine plots
+library(tidyverse)       # all tidy things (ggplot, dplyr, etc.)
+```
+
+```{r}
+# load data
+full_ann <- read.csv("./data/processed/full-sample/full_sample_processed.csv")
+# tiled
+df_30 <- read.csv("./data/output/full-sample/full_sample_tile_30_sec_split_utterances_no_overlap.csv")
+```
+
